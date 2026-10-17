@@ -43,8 +43,8 @@ export function ProjectBoqPage() {
   const [searchParams] = useSearchParams();
   const { projectId: selectedProjectId, setProjectId } = useSelectedProject();
   const id = String(
-    searchParams.get('projectId')
-      || searchParams.get('id')
+    searchParams?.get('projectId')
+      || searchParams?.get('id')
       || routeProjectId
       || selectedProjectId
       || '',

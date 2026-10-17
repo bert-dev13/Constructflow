@@ -1,7 +1,25 @@
 import type { BarChartTask, PdmActivity } from '../types';
 import type { SCurveCostItem } from './sCurveItems';
 
-export type SCurveReportingInterval = '10_day' | '30_day';
+export type SCurveReportingInterval = '5_day' | '10_day' | '15_day' | '20_day' | '30_day';
+
+export const SCurveReportingIntervals: SCurveReportingInterval[] = [
+  '5_day',
+  '10_day',
+  '15_day',
+  '20_day',
+  '30_day',
+];
+
+export function isSCurveReportingInterval(value: unknown): value is SCurveReportingInterval {
+  return (
+    value === '5_day' ||
+    value === '10_day' ||
+    value === '15_day' ||
+    value === '20_day' ||
+    value === '30_day'
+  );
+}
 
 export interface SCurvePeriodRow {
   periodIndex: number;
@@ -24,12 +42,28 @@ function round4(value: number): number {
   return Math.round((value + Number.EPSILON) * 10000) / 10000;
 }
 
+/** Exclusive calendar-day span (end − start). 0 when end ≤ start. */
+export function exclusiveDaysBetween(startDate: string, endDate: string): number {
+  const start = Date.parse(`${startDate.slice(0, 10)}T00:00:00Z`);
+  const end = Date.parse(`${endDate.slice(0, 10)}T00:00:00Z`);
+  if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) return 0;
+  return Math.round((end - start) / 86_400_000);
+}
+
 export function intervalDays(interval: SCurveReportingInterval): number {
-  return interval === '10_day' ? 10 : 30;
+  if (interval === '5_day') return 5;
+  if (interval === '10_day') return 10;
+  if (interval === '15_day') return 15;
+  if (interval === '20_day') return 20;
+  return 30;
 }
 
 function periodLabel(interval: SCurveReportingInterval, periodIndex: number): string {
-  return interval === '10_day' ? `10-Day ${periodIndex}` : `Month ${periodIndex}`;
+  if (interval === '5_day') return `5-Day ${periodIndex}`;
+  if (interval === '10_day') return `10-Day ${periodIndex}`;
+  if (interval === '15_day') return `15-Day ${periodIndex}`;
+  if (interval === '20_day') return `20-Day ${periodIndex}`;
+  return `Month ${periodIndex}`;
 }
 
 export function periodIndexForDate(
@@ -163,6 +197,67 @@ export function theoreticalAccomplishmentPct(
   if (current <= 0) return 0;
   if (current >= total) return 100;
   return round4((100 * (1 - Math.cos(Math.PI * (current / total)))) / 2);
+}
+
+/**
+ * Original (blue) theoretical % — cosine S-curve.
+ * With periodStart: STEWA-style inclusive elapsed from NTP+9 / project start, with suspension freeze.
+ * Without periodStart: exclusive day count from start→asOf over duration.
+ */
+export function originalTheoreticalPct(
+  startDate: string,
+  endDate: string,
+  asOf: string,
+  durationDays?: number | null,
+  periodStart?: string | null,
+  suspensionDays?: number | null,
+  suspensionStart?: string | null,
+  suspensionEnd?: string | null,
+): number | null {
+  const start = startDate.slice(0, 10);
+  const end = endDate.slice(0, 10);
+  const date = asOf.slice(0, 10);
+  if (!start || !end || !date || date < start || date > end) return null;
+
+  const duration =
+    durationDays != null && Number.isFinite(Number(durationDays)) && Number(durationDays) > 0
+      ? Math.max(1, Math.floor(Number(durationDays)))
+      : exclusiveDaysBetween(start, end);
+
+  if (duration <= 0) return date !== start ? 100 : 0;
+
+  if (periodStart) {
+    const period = periodStart.slice(0, 10);
+    const suspDays = Math.max(0, Number(suspensionDays ?? 0));
+    const sStart = suspensionStart?.slice(0, 10) ?? '';
+    const sEnd = suspensionEnd?.slice(0, 10) ?? '';
+    const hasWindow = !!(sStart && sEnd && sEnd >= sStart && suspDays > 0);
+
+    let effectiveAsOf = date;
+    let effectiveSusp = hasWindow ? 0 : suspDays;
+
+    if (hasWindow && date >= sStart && date <= sEnd) {
+      const dayBefore = addDays(sStart, -1);
+      effectiveAsOf = dayBefore && dayBefore >= period ? dayBefore : period;
+      effectiveSusp = 0;
+    } else if (hasWindow && date > sEnd) {
+      effectiveSusp = suspDays;
+    }
+
+    const asOfMs = Date.parse(`${effectiveAsOf}T00:00:00Z`);
+    const periodMs = Date.parse(`${period}T00:00:00Z`);
+    if (!Number.isFinite(asOfMs) || !Number.isFinite(periodMs)) return null;
+    const span = Math.round((asOfMs - periodMs) / 86_400_000);
+    const elapsed = Math.max(0, span + 1 - effectiveSusp);
+    const total = Math.max(1, duration);
+    const current = Math.max(0, Math.min(total, elapsed));
+    return (100 * (1 - Math.cos((current / total) * Math.PI))) / 2;
+  }
+
+  const elapsed = exclusiveDaysBetween(start, date);
+  const total = Math.max(1, duration);
+  const current = Math.max(0, Math.min(total, elapsed));
+  return (100 * (1 - Math.cos((current / total) * Math.PI))) / 2;
 }
 
 /**
@@ -385,7 +480,7 @@ export function buildTheoreticalBarChartTasks(input: {
     return {
       id: `theoretical-${index + 1}`,
       index: index + 1,
-      name: `${reportingInterval === '10_day' ? '10-Day' : 'Month'} ${index + 1}`,
+      name: `${periodLabel(reportingInterval, index + 1)}`,
       startDay,
       endDay,
       actualEndDay: null,

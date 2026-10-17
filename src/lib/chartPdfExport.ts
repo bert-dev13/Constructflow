@@ -95,6 +95,7 @@ export type PercentLabelSeed = {
   value: number;
   series: 'target' | 'original' | 'revised' | 'actual';
   width: number;
+  date?: string;
 };
 
 export type PlacedPercentLabel = PercentLabelSeed & {

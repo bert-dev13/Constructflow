@@ -1,6 +1,10 @@
 import { collection, getDocs, query, where } from 'firebase/firestore';
 import type { ReportProgressEntry } from '../../components/ReportProgressFeed';
-import { formatExcelDate, formatSwaAsOfLabel } from '../stewaCalculations';
+import {
+  calculatePlannedPercentage,
+  formatExcelDate,
+  formatSwaAsOfLabel,
+} from '../stewaCalculations';
 import { computeWorkItems, type WorkItem } from '../workItems';
 import { COLLECTIONS } from './collections';
 import { db } from './config';
@@ -76,17 +80,38 @@ function mapProgressDocs(
     const reportNumber = String(data.reportNumber ?? d.id);
     const planDuration = Number(reportData.contract_duration);
     const planSuspension = Number(reportData.approved_time_suspension ?? 0);
+    const ntp = String(reportData.notice_to_proceed ?? '').trim();
+    const asOfStartRaw = String(reportData.as_of_start ?? '').trim().slice(0, 10);
+    let stewaPlannedPercent: number | undefined;
+    if (reportType === 'STEWA') {
+      const fromReport = Number(
+        reportData.percent_planned ?? reportData.planned ?? reportData.rev_target ?? reportData.orig_target,
+      );
+      if (Number.isFinite(fromReport)) {
+        stewaPlannedPercent = Math.round(fromReport * 1000) / 1000;
+      } else if (ntp && Number.isFinite(planDuration) && planDuration > 0) {
+        const calculated = calculatePlannedPercentage({
+          noticeToProceed: ntp,
+          contractDurationDays: planDuration,
+          asOf: date,
+          suspensionDays: Number.isFinite(planSuspension) ? planSuspension : 0,
+        });
+        if (calculated != null) stewaPlannedPercent = calculated;
+      }
+    }
     entries.push({
       id: d.id,
       reportNumber,
       reportType,
       date,
+      asOfStart:
+        reportType === 'SWA' && /^\d{4}-\d{2}-\d{2}$/.test(asOfStartRaw) ? asOfStartRaw : undefined,
       asOfLabel,
       percent: pct,
       label: `${reportType} ${reportNumber}`,
       status,
-      planNoticeToProceed:
-        reportType === 'STEWA' ? String(reportData.notice_to_proceed ?? '').trim() : undefined,
+      stewaPlannedPercent,
+      planNoticeToProceed: reportType === 'STEWA' && ntp ? ntp : undefined,
       planContractDuration:
         reportType === 'STEWA' && Number.isFinite(planDuration) && planDuration > 0
           ? planDuration

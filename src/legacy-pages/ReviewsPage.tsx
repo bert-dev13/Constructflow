@@ -7,9 +7,9 @@ import { emailApproveFromLink, emailReviseFromLink } from '../lib/swaStewaApi';
 
 export function ReviewsPage() {
   const [params] = useSearchParams();
-  const reportId = params.get('report') ?? '';
-  const action = params.get('action') ?? '';
-  const token = params.get('token') ?? '';
+  const reportId = params?.get('report') ?? '';
+  const action = params?.get('action') ?? '';
+  const token = params?.get('token') ?? '';
 
   const [comment, setComment] = useState('');
   const [loading, setLoading] = useState(false);

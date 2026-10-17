@@ -4,7 +4,6 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import {
   CartesianGrid,
   DefaultZIndexes,
-  Legend,
   Line,
   LineChart,
   ReferenceLine,
@@ -38,6 +37,7 @@ import { generateSwaStewaSCurve,
   type SCurveType,
 } from '../lib/sCurveApi';
 import { computeSCurveCostSummary } from '../lib/sCurveItems';
+import type { SCurvePayItemMappingLine } from '../lib/sCurveCostWeights';
 import type { SCurvePoint } from '../types';
 import { exportSCurvePdf, formatChartPercent, placePercentLabels } from '../lib/chartPdfExport';
 import { NavIcon, type NavIconName } from '../components/NavIcon';
@@ -45,6 +45,14 @@ import { Pagination } from '../components/ui/Pagination';
 import { PreviewModal } from '../components/ui/PreviewModal';
 import { usePagination } from '../hooks/usePagination';
 import { canEditProjectCharts, canEditSCurvePeriods } from '../lib/chartPermissions';
+import {
+  curveSeriesDisplayDates,
+  originalCurveDisplayDates,
+  thinDatesByPixelGap,
+  sampleSeriesDisplayDates,
+} from '../lib/curveUtils';
+
+type ChartPoint = SCurvePoint & { t: number };
 
 const STATUS_STYLES: Record<string, { badge: string; label: string }> = {
   target_only: { badge: 'bg-blue-50 text-blue-800', label: 'Target Plan only' },
@@ -67,32 +75,33 @@ function sourceOptionLabel(entry: ReportProgressEntry): string {
   return `${type} – As of ${period}`;
 }
 
-function SeriesDot({
+function formatAxisDate(ms: number): string {
+  const date = new Date(ms);
+  if (Number.isNaN(date.getTime())) return '';
+  return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'UTC' });
+}
+
+function MarkerDot({
   cx,
   cy,
   payload,
-  series,
-  showDot,
+  dates,
+  fill,
+  active = false,
 }: {
   cx?: number;
   cy?: number;
-  payload?: SCurvePoint;
-  series: 'target' | 'actual';
-  showDot: boolean;
+  payload?: ChartPoint | SCurvePoint;
+  dates?: Set<string>;
+  fill: string;
+  active?: boolean;
 }) {
-  if (cx == null || cy == null || !Number.isFinite(cx) || !Number.isFinite(cy)) return <g />;
-  const target = payload?.originalPlan;
-  const actual = payload?.actual;
-  const close =
-    target != null && actual != null && Number.isFinite(target) && Number.isFinite(actual) && Math.abs(target - actual) <= 2;
-  if (!showDot && !close) return <g />;
-  if (close && series === 'target') {
-    return <circle cx={cx} cy={cy} r={7} fill="#2563eb" />;
+  if (cx == null || cy == null || !Number.isFinite(cx) || !Number.isFinite(cy) || !payload?.date) {
+    return <g />;
   }
-  if (close && series === 'actual') {
-    return <circle cx={cx} cy={cy} r={3.5} fill="#f97316" stroke="#ffffff" strokeWidth={1.5} />;
-  }
-  return <circle cx={cx} cy={cy} r={4} fill={series === 'target' ? '#2563eb' : '#f97316'} />;
+  const key = payload.date.slice(0, 10);
+  if (!active && dates && !dates.has(key)) return <g />;
+  return <circle cx={cx} cy={cy} r={active ? 4.5 : 3.5} fill={fill} />;
 }
 
 function PlanLine({
@@ -100,15 +109,17 @@ function PlanLine({
   name,
   stroke,
   strokeWidth = 2,
-  series,
-  showDot,
+  dotDates,
+  animationBegin = 0,
+  animate = true,
 }: {
   dataKey: 'originalPlan' | 'actual';
   name: string;
   stroke: string;
   strokeWidth?: number;
-  series: 'target' | 'actual';
-  showDot: boolean;
+  dotDates?: Set<string>;
+  animationBegin?: number;
+  animate?: boolean;
 }) {
   return (
     <Line
@@ -117,22 +128,28 @@ function PlanLine({
       name={name}
       stroke={stroke}
       strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      isAnimationActive={animate}
+      animationDuration={1200}
+      animationEasing="ease-out"
+      animationBegin={animationBegin}
       dot={(props) => (
-        <SeriesDot
+        <MarkerDot
           cx={props.cx}
           cy={props.cy}
-          payload={props.payload as SCurvePoint | undefined}
-          series={series}
-          showDot={showDot}
+          payload={props.payload as ChartPoint | undefined}
+          dates={dotDates}
+          fill={stroke}
         />
       )}
       activeDot={(props) => (
-        <SeriesDot
+        <MarkerDot
           cx={props.cx}
           cy={props.cy}
-          payload={props.payload as SCurvePoint | undefined}
-          series={series}
-          showDot
+          payload={props.payload as ChartPoint | undefined}
+          fill={stroke}
+          active
         />
       )}
       connectNulls
@@ -140,36 +157,169 @@ function PlanLine({
   );
 }
 
-function PercentLabels({
+function LegendItem({
+  color,
+  label,
+  dashed = false,
+}: {
+  color: string;
+  label: string;
+  dashed?: boolean;
+}) {
+  return (
+    <span className="inline-flex items-center gap-2 text-xs font-semibold text-text">
+      <svg width="28" height="10" aria-hidden="true">
+        <line
+          x1="1"
+          y1="5"
+          x2="27"
+          y2="5"
+          stroke={color}
+          strokeWidth="2.5"
+          strokeLinecap="round"
+          strokeDasharray={dashed ? '5 3' : undefined}
+        />
+      </svg>
+      {label}
+    </span>
+  );
+}
+
+/** Sparse Original markers + labels (always on; denser when Show percentage labels is checked). */
+function OriginalPercentLabels({
   points,
-  show,
+  showLabels,
   periodsCount,
 }: {
-  points: SCurvePoint[];
-  show: boolean;
+  points: ChartPoint[];
+  showLabels: boolean;
   periodsCount?: number;
 }) {
   const xScale = useXAxisScale();
   const yScale = useYAxisScale();
   const plot = usePlotArea();
-  if (!show || !xScale || !yScale) return null;
-  const fontSize = 10;
-  // Choose display dates (sampled) and thin them by pixel gap to avoid overcrowding.
-  const sampledDates = originalCurveDisplayDates(points, periodsCount ?? 7);
-  const xForDate = (d: string) => {
-    try {
-      return xScale(d, { position: 'middle' }) as number | null;
-    } catch {
-      return null;
-    }
-  };
-  const displayDatesSet = new Set(thinDatesByPixelGap(sampledDates, xForDate, 36));
+  if (!xScale || !yScale) return null;
 
-  const seeds = points.flatMap((point) =>
-    (['original', 'revised', 'actual'] as const).flatMap((series) => {
-      const value =
-        series === 'original' ? point.originalPlan : series === 'revised' ? point.currentPlan : point.actual;
-      if (value == null || !Number.isFinite(value)) return [];
+  const byDate = new Map(points.map((point) => [point.date.slice(0, 10), point]));
+  const xForDate = (date: string) => {
+    const point = byDate.get(date);
+    if (!point) return null;
+    const x = xScale(point.t, { position: 'middle' });
+    return x != null && Number.isFinite(x) ? x : null;
+  };
+
+  const count = Math.max(1, Math.floor(periodsCount ?? 7));
+  const sampled = originalCurveDisplayDates(points, count);
+  const sampledXs = sampled.map((date) => xForDate(date)).filter((x): x is number => x != null);
+  const span = sampledXs.length >= 2 ? sampledXs[sampledXs.length - 1] - sampledXs[0] : 0;
+  const autoCount = span < 1 ? 2 : Math.min(7, Math.max(2, Math.floor(span / 34) + 1));
+  const labelDates = showLabels
+    ? sampled
+    : thinDatesByPixelGap(
+        originalCurveDisplayDates(points, Math.min(autoCount, count)),
+        xForDate,
+        Math.max(28, Math.min(40, (span / Math.max(1, autoCount - 1)) * 0.85)),
+      );
+
+  const seeds = labelDates.flatMap((date) => {
+    const point = byDate.get(date);
+    const value = point?.originalPlan;
+    if (!point || value == null || !Number.isFinite(value)) return [];
+    const x = xScale(point.t, { position: 'middle' });
+    const y = yScale(value);
+    if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) return [];
+    const text = formatChartPercent(value);
+    return [
+      {
+        x,
+        y,
+        value,
+        series: 'original' as const,
+        width: Math.max(10, text.length * 10 * 0.72),
+        date,
+      },
+    ];
+  });
+  const placed = placePercentLabels(seeds, {
+    fontSize: 10,
+    plotTop: plot?.y,
+    plotBottom: plot ? plot.y + plot.height : undefined,
+  });
+
+  return (
+    <ZIndexLayer zIndex={DefaultZIndexes.label}>
+      <g>
+        {sampled.map((date) => {
+          const point = byDate.get(date);
+          if (!point || point.originalPlan == null) return null;
+          const x = xScale(point.t, { position: 'middle' });
+          const y = yScale(point.originalPlan);
+          if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+          return <circle key={`dot-${date}`} cx={x} cy={y} r={3.5} fill="#2563eb" />;
+        })}
+        {placed.map((label) => {
+          const point = label.date ? byDate.get(label.date) : undefined;
+          const anchorX = point ? xScale(point.t, { position: 'middle' }) : label.x;
+          const anchorY = point && point.originalPlan != null ? yScale(point.originalPlan) : label.y;
+          const showLeader =
+            anchorX != null &&
+            anchorY != null &&
+            Math.hypot(label.labelX - anchorX, label.labelY - anchorY) > 6;
+          return (
+            <g key={`label-${label.series}-${label.x}-${label.value}`}>
+              {showLeader && (
+                <line
+                  x1={anchorX}
+                  y1={anchorY}
+                  x2={label.labelX}
+                  y2={label.labelY}
+                  stroke="#cbd5e1"
+                  strokeWidth={1}
+                />
+              )}
+              <text
+                x={label.labelX}
+                y={label.labelY}
+                textAnchor="middle"
+                fill="#2563eb"
+                stroke="#ffffff"
+                strokeWidth={3}
+                fontSize={10}
+                fontWeight={600}
+                style={{ paintOrder: 'stroke' }}
+              >
+                {label.text}
+              </text>
+            </g>
+          );
+        })}
+      </g>
+    </ZIndexLayer>
+  );
+}
+
+/** Target / Actual percentage labels when Show percentage labels is on. */
+function ExtraPercentLabels({
+  points,
+  show,
+  datesBySeries,
+}: {
+  points: ChartPoint[];
+  show: boolean;
+  datesBySeries: { revised: Set<string>; actual: Set<string> };
+}) {
+  const xScale = useXAxisScale();
+  const yScale = useYAxisScale();
+  const plot = usePlotArea();
+  if (!show || !xScale || !yScale) return null;
+
+  const byDate = new Map(points.map((point) => [point.date.slice(0, 10), point]));
+  const seeds = (['revised', 'actual'] as const).flatMap((series) => {
+    const key = series === 'revised' ? 'currentPlan' : 'actual';
+    return [...datesBySeries[series]].sort().flatMap((date) => {
+      const point = byDate.get(date);
+      const value = point?.[key];
+      if (!point || value == null || !Number.isFinite(value)) return [];
       if (
         series === 'revised' &&
         point.originalPlan != null &&
@@ -177,21 +327,19 @@ function PercentLabels({
       ) {
         return [];
       }
-      // Only show labels on sampled/thinned dates
-      const dateKey = point.date?.slice(0, 10);
-      if (!displayDatesSet.has(dateKey ?? '')) return [];
-      const x = xScale(point.date, { position: 'middle' });
+      const x = xScale(point.t, { position: 'middle' });
       const y = yScale(value);
       if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) return [];
       const text = formatChartPercent(value);
-      return [{ x, y, value, series, width: Math.max(fontSize, text.length * fontSize * 0.72) }];
-    }),
-  );
+      return [{ x, y, value, series, width: Math.max(10, text.length * 10 * 0.72) }];
+    });
+  });
   const placed = placePercentLabels(seeds, {
-    fontSize,
+    fontSize: 10,
     plotTop: plot?.y,
     plotBottom: plot ? plot.y + plot.height : undefined,
   });
+
   return (
     <ZIndexLayer zIndex={DefaultZIndexes.label}>
       <g>
@@ -201,12 +349,10 @@ function PercentLabels({
             x={label.labelX}
             y={label.labelY}
             textAnchor="middle"
-            fill={
-              label.series === 'actual' ? '#f97316' : label.series === 'revised' ? '#7c3aed' : '#2563eb'
-            }
+            fill={label.series === 'actual' ? '#f97316' : '#7c3aed'}
             stroke="#ffffff"
             strokeWidth={3}
-            fontSize={fontSize}
+            fontSize={10}
             fontWeight={600}
             style={{ paintOrder: 'stroke' }}
           >
@@ -215,6 +361,88 @@ function PercentLabels({
         ))}
       </g>
     </ZIndexLayer>
+  );
+}
+
+/** Draw N overlay markers for the actual (orange) series by interpolating along the rendered actual curve.
+ * This does not alter underlying data or the line; it only places SVG circles at computed positions.
+ */
+function ActualOverlayMarkers({
+  chartPoints,
+  periods,
+}: {
+  chartPoints: ChartPoint[];
+  periods: number;
+}) {
+  const xScale = useXAxisScale();
+  const yScale = useYAxisScale();
+  if (!xScale || !yScale || chartPoints.length === 0) return null;
+
+  const rows = chartPoints.filter((p) => p.actual != null && Number.isFinite(Number(p.actual)));
+  if (rows.length === 0) return null;
+
+  // find first non-zero actual index within rows
+  let firstNonZeroIdx = rows.findIndex((p) => Number(p.actual) !== 0);
+  if (firstNonZeroIdx === -1) firstNonZeroIdx = 0;
+  const startDate = rows[Math.max(0, firstNonZeroIdx - 1)].date.slice(0, 10);
+  const endDate = rows[rows.length - 1].date.slice(0, 10);
+
+  // build full date list from chartPoints between startDate..endDate
+  const fullRange = chartPoints
+    .map((p) => p.date.slice(0, 10))
+    .filter((d) => d >= startDate && d <= endDate);
+  const uniqRange = Array.from(new Set(fullRange));
+  if (uniqRange.length === 0) return null;
+
+  const N = Math.max(1, Math.floor(periods || 1));
+  const sampleDates: string[] =
+    uniqRange.length <= N
+      ? uniqRange
+      : (() => {
+          const s: string[] = [];
+          for (let i = 0; i < N; i += 1) {
+            const idx = Math.round((i * (uniqRange.length - 1)) / (N - 1));
+            const d = uniqRange[Math.min(uniqRange.length - 1, Math.max(0, idx))];
+            if (!s.includes(d)) s.push(d);
+          }
+          return s;
+        })();
+
+  // helper: compute interpolated actual at iso date
+  function interpActualAt(dateIso: string): number | null {
+    const ms = Date.parse(`${dateIso.slice(0, 10)}T00:00:00Z`);
+    // find surrounding rows with known actual
+    let prev = null;
+    let next = null;
+    for (const r of rows) {
+      const rMs = Date.parse(`${r.date.slice(0, 10)}T00:00:00Z`);
+      if (rMs <= ms) prev = { ms: rMs, val: Number(r.actual) };
+      if (rMs >= ms) {
+        next = { ms: rMs, val: Number(r.actual) };
+        break;
+      }
+    }
+    if (prev && prev.ms === ms) return prev.val;
+    if (!prev && next) return next.val;
+    if (prev && !next) return prev.val;
+    if (prev && next && next.ms !== prev.ms) {
+      const t = (ms - prev.ms) / (next.ms - prev.ms);
+      return prev.val + t * (next.val - prev.val);
+    }
+    return null;
+  }
+
+  return (
+    <g>
+      {sampleDates.map((d, idx) => {
+        const val = interpActualAt(d);
+        if (val == null || !Number.isFinite(val)) return null;
+        const x = xScale(Date.parse(`${d}T00:00:00Z`), { position: 'middle' }) as number | null;
+        const y = yScale(val);
+        if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) return null;
+        return <circle key={`actual-overlay-${d}-${idx}`} cx={x} cy={y} r={3.5} fill="#f97316" stroke="#fff" strokeWidth={0.5} />;
+      })}
+    </g>
   );
 }
 
@@ -232,7 +460,9 @@ export function SCurvePage() {
   const { projectId, setProjectId } = useSelectedProject();
   const [curveType, setCurveType] = useState<SCurveType>('pdm_based');
   const [reportingInterval, setReportingInterval] = useState<SCurveReportingInterval>('30_day');
-  const [theoreticalTotalPeriods, setTheoreticalTotalPeriods] = useState(1);
+  const [theoreticalTotalPeriods, setTheoreticalTotalPeriods] = useState(5);
+  const [periodInput, setPeriodInput] = useState<string>('5');
+  const firstLoadRef = useRef(true);
   const [settingsSaving, setSettingsSaving] = useState(false);
   const [periodSaveError, setPeriodSaveError] = useState('');
   const [generatingCurve, setGeneratingCurve] = useState(false);
@@ -262,6 +492,8 @@ export function SCurvePage() {
   const [targetPlanPercent, setTargetPlanPercent] = useState<number | null>(null);
   const [targetPlanPhp, setTargetPlanPhp] = useState<number | null>(null);
   const [actualPlanPercent, setActualPlanPercent] = useState<number | null>(null);
+  const [apiTotalContractAmount, setApiTotalContractAmount] = useState(0);
+  const [payItemMappings, setPayItemMappings] = useState<SCurvePayItemMappingLine[]>([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [chartReady, setChartReady] = useState(false);
@@ -274,8 +506,24 @@ export function SCurvePage() {
   const canEditCharts = canEditProjectCharts(user?.role);
   const canEditPeriods = canEditSCurvePeriods(user?.role);
   const canEditCostItems = canEditCharts;
-  const costSummary = useMemo(() => computeSCurveCostSummary(costItems), [costItems]);
-  // No module-level dot-date workaround (removed).
+  // Candidate C: prefer full SWA contract amount from API; keep item weight % when present.
+  const costSummary = useMemo(() => {
+    if (costDirty) return computeSCurveCostSummary(costItems);
+    const mappedWeightPct = costItems.reduce((sum, item) => sum + (Number(item.weightPct) || 0), 0);
+    if (mappedWeightPct <= 0) return computeSCurveCostSummary(costItems);
+    const itemsAmount = costItems.reduce(
+      (sum, item) => sum + (Number(item.amount) || item.quantity * item.unitCost),
+      0,
+    );
+    return {
+      items: costItems,
+      totalContractAmount: apiTotalContractAmount > 0 ? apiTotalContractAmount : itemsAmount,
+      totalWeightPct: mappedWeightPct,
+    };
+  }, [costDirty, costItems, apiTotalContractAmount]);
+  const unmappedWeightPct = payItemMappings
+    .filter((line) => line.status !== 'mapped')
+    .reduce((sum, line) => sum + (Number(line.weightPct) || 0), 0);
   const [activeTab, setActiveTab] = useState<SCurveTab>('curve');
   const costPaging = usePagination(costSummary.items, { resetKey: `${projectId}-${viewingSnapshotId ?? 'live'}` });
   const activityPaging = usePagination(activities, { resetKey: projectId });
@@ -288,6 +536,75 @@ export function SCurvePage() {
         (entry) => (entry.reportType === 'SWA' || entry.reportType === 'STEWA') && entry.id,
       ),
     [reportFeed],
+  );
+
+  const chartPoints = useMemo<ChartPoint[]>(
+    () =>
+      points.map((point) => {
+        const iso = String(point.date ?? '').slice(0, 10);
+        const ms = Date.parse(`${iso}T00:00:00Z`);
+        return {
+          ...point,
+          // fallback to 0 when date parse fails to avoid runtime exceptions during re-render
+          t: Number.isFinite(ms) ? ms : 0,
+        } as ChartPoint;
+      }),
+    [points],
+  );
+  const originalDotDates = useMemo(() => {
+    try {
+      return new Set(originalCurveDisplayDates(chartPoints, Math.max(1, Math.floor(theoreticalTotalPeriods || 1))));
+    } catch {
+      return new Set<string>();
+    }
+  }, [chartPoints, theoreticalTotalPeriods]);
+  // When the user selects a periods count, mirror the Original sampling for
+  // Revised and Actual series so each shows the same number of marker dates.
+  const revisedDotDates = useMemo(() => {
+    const dates = sampleSeriesDisplayDates(
+      chartPoints as unknown as Array<{ date: string } & Record<string, unknown>>,
+      'currentPlan',
+      Math.max(1, Math.floor(theoreticalTotalPeriods || 1)),
+    );
+    return new Set(dates);
+  }, [chartPoints, theoreticalTotalPeriods]);
+ 
+  // Orange Actual markers must be chosen from real SWA report points only.
+  const swaReports = useMemo(
+    () =>
+      reportFeed
+        .filter((r) => (r.reportType === 'SWA' || r.reportType === 'STEWA') && r.percent != null)
+        .slice()
+        .sort((a, b) => a.date.localeCompare(b.date)),
+    [reportFeed],
+  );
+
+  const actualCandidateDatesMemo = useMemo(() => {
+    const rows = chartPoints.filter((p) => p.actual != null && Number.isFinite(Number(p.actual)));
+    if (rows.length === 0) return [] as string[];
+    let firstNonZeroIdx = rows.findIndex((p) => Number(p.actual) !== 0);
+    if (firstNonZeroIdx === -1) firstNonZeroIdx = 0;
+    const startIdx = firstNonZeroIdx > 0 ? Math.max(0, firstNonZeroIdx - 1) : 0;
+    return rows.slice(startIdx).map((p) => p.date.slice(0, 10));
+  }, [chartPoints]);
+
+  const actualDotDates = useMemo(() => {
+    if (actualCandidateDatesMemo.length === 0) return new Set<string>();
+    const candidateDates = actualCandidateDatesMemo;
+    const N = Math.max(1, Math.floor(theoreticalTotalPeriods || 1));
+    if (candidateDates.length <= N) return new Set(candidateDates);
+    const sampled: string[] = [];
+    for (let i = 0; i < N; i += 1) {
+      const idx = Math.round((i * (candidateDates.length - 1)) / (N - 1));
+      const d = candidateDates[Math.min(candidateDates.length - 1, Math.max(0, idx))];
+      if (d && !sampled.includes(d)) sampled.push(d);
+    }
+    return new Set(sampled);
+  }, [actualCandidateDatesMemo, theoreticalTotalPeriods]);
+
+  const extraLabelDates = useMemo(
+    () => ({ revised: revisedDotDates, actual: actualDotDates }),
+    [revisedDotDates, actualDotDates],
   );
 
   useEffect(() => {
@@ -410,33 +727,6 @@ export function SCurvePage() {
     getSCurve(projectId, viewingSnapshotId)
       .then((res) => {
         setPoints(res.points);
-        // Debug hook: POST final chart data to local API for analysis.
-        try {
-          void fetch('/api/debug/save_scurve', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              projectId,
-              viewingSnapshotId,
-              reportingInterval: res.reporting_interval,
-              curveType: res.curve_type,
-              points: res.points,
-              activities: res.activities,
-              periods: res.periods,
-              comparisons: res.comparisons,
-              reportFeed: res.report_feed,
-              versions: res.versions,
-              latestReportDate: res.latest_report_date,
-              projectStartDate: res.project_start_date,
-              projectEndDate: res.project_end_date,
-              totalContractAmount: res.total_contract_amount,
-              targetPlanPercent: res.target_plan_percent,
-              actualPlanPercent: res.actual_plan_percent,
-            }),
-          });
-        } catch {
-          /* ignore debug failures */
-        }
         setActivities(res.activities);
         setCostItems(res.cost_items ?? []);
         setPeriods(res.periods ?? []);
@@ -456,11 +746,18 @@ export function SCurvePage() {
         setProjectEndDate(res.project_end_date ?? null);
         setCurveType(res.curve_type);
         setReportingInterval(res.reporting_interval);
-        setTheoreticalTotalPeriods(res.theoretical_total_periods);
+        // On first load for this project/viewing snapshot show default = 5.
+        if (firstLoadRef.current) {
+          setTheoreticalTotalPeriods(5);
+          setPeriodInput(String(5));
+          firstLoadRef.current = false;
+        }
         savedPeriodCountRef.current = res.theoretical_total_periods;
         setTargetPlanPercent(res.target_plan_percent ?? null);
         setTargetPlanPhp(res.target_plan_php ?? null);
         setActualPlanPercent(res.actual_plan_percent ?? null);
+        setApiTotalContractAmount(Number(res.total_contract_amount) || 0);
+        setPayItemMappings(res.pay_item_mappings ?? []);
         setCostDirty(false);
         setCostMessage('');
       })
@@ -489,11 +786,17 @@ export function SCurvePage() {
         setTargetPlanPercent(null);
         setTargetPlanPhp(null);
         setActualPlanPercent(null);
+        setApiTotalContractAmount(0);
+        setPayItemMappings([]);
         setCostDirty(false);
         setCostMessage('');
       })
       .finally(() => setLoading(false));
   }, [projectId, viewingSnapshotId, settingsVersion]);
+  // Reset first-load flag when user navigates to a different project or snapshot
+  useEffect(() => {
+    firstLoadRef.current = true;
+  }, [projectId, viewingSnapshotId]);
 
   useEffect(() => {
     if (!canEditCostItems || !costDirty || viewingSnapshotId) return;
@@ -512,6 +815,7 @@ export function SCurvePage() {
             })),
           });
           setCostItems(res.cost_items);
+          setApiTotalContractAmount(Number(res.total_contract_amount) || 0);
           setCostDirty(false);
           setCostMessage('Cost items auto-saved.');
         } catch {
@@ -634,7 +938,10 @@ export function SCurvePage() {
                     }
                     className="bg-transparent text-xs font-semibold text-text outline-none"
                   >
+                    <option value="5_day">5-day</option>
                     <option value="10_day">10-day</option>
+                    <option value="15_day">15-day</option>
+                    <option value="20_day">20-day</option>
                     <option value="30_day">30-day</option>
                   </select>
                 </label>
@@ -646,7 +953,16 @@ export function SCurvePage() {
                   {curveType === 'ideal_theoretical' ? 'Theoretical' : 'PDM target'}
                 </span>
                 <span className="rounded-lg border border-border bg-surface px-2.5 py-1.5 font-semibold text-text">
-                  {reportingInterval === '10_day' ? '10-day' : '30-day'} interval
+                  {reportingInterval === '5_day'
+                    ? '5-day'
+                    : reportingInterval === '10_day'
+                      ? '10-day'
+                      : reportingInterval === '15_day'
+                        ? '15-day'
+                        : reportingInterval === '20_day'
+                          ? '20-day'
+                          : '30-day'}{' '}
+                  interval
                 </span>
                 <span className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 font-semibold text-amber-900">
                   View only
@@ -660,13 +976,51 @@ export function SCurvePage() {
                   Periods
                 </span>
                 <input
-                  type="number"
-                  min={1}
-                  value={theoreticalTotalPeriods}
+                  type="text"
+                  inputMode="numeric"
+                  pattern="[0-9]*"
+                  value={periodInput}
                   disabled={settingsSaving}
                   aria-label="S-Curve periods"
-                  onChange={(e) => setTheoreticalTotalPeriods(Math.max(1, Number(e.target.value || 1)))}
-                  onBlur={(e) => void persistPeriodCount(Number(e.currentTarget.value || 1))}
+                  onChange={(e) => {
+                    // Allow empty during editing, allow numeric text only
+                    const v = String(e.target.value || '');
+                    // permit digits and empty; strip non-digits
+                    if (v === '') {
+                      setPeriodInput('');
+                    } else {
+                      const filtered = v.replace(/[^\d]/g, '');
+                      setPeriodInput(filtered);
+                    }
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      (e.target as HTMLInputElement).blur();
+                    }
+                  }}
+                  onBlur={() => {
+                    // Commit on blur: parse, validate, clamp, persist
+                    const raw = (periodInput ?? '').trim();
+                    let next: number;
+                    if (raw === '') {
+                      next = 5;
+                    } else {
+                      const n = Math.floor(Number(raw) || 0);
+                      if (!Number.isFinite(n) || n <= 0) {
+                        next = 5;
+                      } else if (n < 2) {
+                        next = 2;
+                      } else if (n > 20) {
+                        next = 20;
+                      } else {
+                        next = n;
+                      }
+                    }
+                    // update display and persist
+                    setTheoreticalTotalPeriods(next);
+                    setPeriodInput(String(next));
+                    void persistPeriodCount(next);
+                  }}
                   className="w-12 bg-transparent text-xs font-semibold text-text outline-none"
                 />
               </label>
@@ -706,7 +1060,7 @@ export function SCurvePage() {
       <div className="space-y-3">
         <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
           {([
-            ['Target plan', targetPlanPercent != null ? `${targetPlanPercent}%` : '—', curveType === 'pdm_based' ? 'STEWA planned % on the revised schedule. Accomplishment does not change it.' : 'Original baseline cumulative for this period. Accomplishment does not change it.', 'planned'],
+            ['Target plan', targetPlanPercent != null ? `${targetPlanPercent}%` : '—', curveType === 'pdm_based' || hasRevisedSchedule ? 'Revised planned progress. STEWA Planned uses the same figure.' : 'Original baseline cumulative for this period. Accomplishment does not change it.', 'planned'],
             ['Target plan (PHP)', targetPlanPhp != null ? `P ${formatMoney(targetPlanPhp)}` : '—', 'Current cumulative target amount', 'reports'],
             ['Actual progress', actualPlanPercent != null ? `${actualPlanPercent}%` : '—', latestReportDate ? `Latest report ${latestReportDate}` : 'No approved report yet', 'actual'],
             ['Schedule variance', variance != null ? `${variance > 0 ? '+' : ''}${variance}%` : '—', variance == null ? 'Waiting for actual progress' : variance < 0 ? 'Behind target plan' : variance > 0 ? 'Ahead of target plan' : 'Matching target plan', 's-curve'],
@@ -726,8 +1080,8 @@ export function SCurvePage() {
         <div className="grid gap-3 sm:grid-cols-3">
           {([
             ['Critical path', criticalPath.length, syncedFromPdm ? 'Synced from PDM schedule' : 'Not synced from PDM', 'approval'],
-            ['Total contract amount', `P ${formatMoney(costSummary.totalContractAmount)}`, 'Sum of all PDM-based item amounts', 'reports'],
-            ['Total WT%', `${costSummary.totalWeightPct.toFixed(2)}%`, 'Should total 100% when items have amounts', 'projects'],
+            ['Total contract amount', `P ${formatMoney(costSummary.totalContractAmount)}`, 'Full SWA contract amount', 'reports'],
+            ['Mapped WT%', `${costSummary.totalWeightPct.toFixed(2)}%`, unmappedWeightPct > 0.05 ? `${unmappedWeightPct.toFixed(2)}% of contract weight is not assigned to a PDM activity.` : 'Cost weight currently assigned to PDM activities', 'projects'],
           ] as [string, string | number, string, NavIconName][]).map(([label, value, caption, icon]) => (
             <div key={label} className="rounded-2xl border border-border bg-card p-4 shadow-sm">
               <div className="flex items-start justify-between gap-3">
@@ -791,7 +1145,11 @@ export function SCurvePage() {
                         <div className="flex flex-wrap items-center justify-between gap-3">
                           <div>
                             <h2 className="text-lg font-semibold text-text">Progress curve</h2>
-                            <p className="mt-1 text-sm text-text-muted">Cumulative progress against the approved baseline and latest reports.</p>
+                            <p className="mt-1 text-sm leading-relaxed text-text-muted">
+                              {curveType === 'pdm_based'
+                                ? 'Original ends at the planned finish. Target follows the revised schedule. Actual is reported accomplishment.'
+                                : 'Cumulative progress against the approved baseline and the latest reports.'}
+                            </p>
                           </div>
                           <div className="flex flex-wrap items-center gap-2">
                             <label className="inline-flex items-center gap-2 rounded-lg border border-border bg-surface px-3 py-1.5 text-xs font-medium text-text">
@@ -935,40 +1293,50 @@ export function SCurvePage() {
                           </div>
                         ) : (
                           <div>
-                            <div className="mt-4 h-80 w-full">
+                            <div className="scurve-stage mt-4 overflow-hidden rounded-2xl border border-border bg-gradient-to-b from-card to-surface-muted/50">
+                              <div className="h-[22rem] w-full px-1 pt-3 sm:px-3">
                               {chartReady ? (
                               <ResponsiveContainer width="100%" height="100%">
                                 <LineChart
-                                  data={points}
+                                  data={chartPoints}
                                   margin={{
-                                    top: showPercentLabels ? 28 : 10,
-                                    right: showPercentLabels ? 28 : 20,
+                                    top: showPercentLabels ? 28 : 8,
+                                    right: showPercentLabels ? 28 : 16,
                                     left: 0,
-                                    bottom: showPercentLabels ? 8 : 0,
+                                    bottom: 4,
                                   }}
                                 >
-                                  <CartesianGrid stroke="#e6ecf2" strokeDasharray="3 3" />
+                                  <CartesianGrid stroke="#e6ecf2" vertical={false} />
                                   <XAxis
-                                    dataKey="date"
+                                    dataKey="t"
+                                    type="number"
+                                    scale="time"
+                                    domain={['dataMin', 'dataMax']}
+                                    tickFormatter={(value) => formatAxisDate(Number(value))}
                                     tick={{ fill: '#5a6b7d', fontSize: 11 }}
                                     angle={-32}
                                     textAnchor="end"
                                     height={42}
                                     minTickGap={72}
+                                    axisLine={false}
+                                    tickLine={false}
                                   />
                                   <YAxis
                                     domain={[0, 100]}
                                     ticks={[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]}
+                                    interval={0}
                                     tick={{ fill: '#5a6b7d', fontSize: 11 }}
                                     tickFormatter={(v) => `${v}%`}
                                     width={40}
+                                    axisLine={false}
+                                    tickLine={false}
                                   />
                                   <Tooltip
-                                    content={({ active, payload, label }) => {
+                                    content={({ active, payload }) => {
                                       if (!active || !payload?.length) return null;
-                                      const row = payload[0]?.payload as SCurvePoint | undefined;
+                                      const row = payload[0]?.payload as ChartPoint | undefined;
                                       const original = row?.originalPlan;
-                                      const target = curveType === 'pdm_based' ? row?.currentPlan : row?.originalPlan;
+                                      const target = hasRevisedSchedule ? row?.currentPlan : row?.originalPlan;
                                       const actual = row?.actual;
                                       const slip =
                                         actual != null && target != null
@@ -976,21 +1344,24 @@ export function SCurvePage() {
                                           : null;
                                       return (
                                         <div className="rounded-lg border border-border bg-card px-3 py-2 text-xs shadow-md">
-                                          <p className="font-semibold text-text">{label}</p>
+                                          <p className="font-semibold text-text">{row?.date}</p>
                                           {row?.periodLabel && (
                                             <p className="text-text-muted">{row.periodLabel}</p>
                                           )}
-                                          {curveType === 'pdm_based' && original != null && (
-                                            <p className="text-[#2563eb]">Original: {original}%</p>
+                                          {(curveType === 'pdm_based' || hasRevisedSchedule) && original != null && (
+                                            <p className="text-[#2563eb]">
+                                              Original: {formatChartPercent(original)}
+                                            </p>
                                           )}
                                           {target != null && (
-                                            <p className={curveType === 'pdm_based' ? 'text-[#7c3aed]' : 'text-[#2563eb]'}>
-                                              {curveType === 'pdm_based' ? 'Target' : 'Target Plan'}: {target}%
+                                            <p className={hasRevisedSchedule ? 'text-[#7c3aed]' : 'text-[#2563eb]'}>
+                                              {hasRevisedSchedule ? 'Target' : 'Target Plan'}:{' '}
+                                              {formatChartPercent(target)}
                                             </p>
                                           )}
                                           {row?.targetAccomplishmentPct != null && (
                                             <p className="text-text-muted">
-                                              Target this period: {row.targetAccomplishmentPct.toFixed(2)}%
+                                              Target this period: {formatChartPercent(row.targetAccomplishmentPct)}
                                               {row.targetAccomplishmentPhp != null
                                                 ? ` · P ${formatMoney(row.targetAccomplishmentPhp)}`
                                                 : ''}
@@ -998,7 +1369,8 @@ export function SCurvePage() {
                                           )}
                                           {actual != null && (
                                             <p className="text-[#f97316]">
-                                              {curveType === 'pdm_based' ? 'Actual' : 'Actual Plan'}: {actual}%
+                                              {curveType === 'pdm_based' ? 'Actual' : 'Actual Plan'}:{' '}
+                                              {formatChartPercent(actual)}
                                             </p>
                                           )}
                                           {slip != null && (
@@ -1016,13 +1388,12 @@ export function SCurvePage() {
                                       );
                                     }}
                                   />
-                                  <Legend />
                                   <PlanLine
                                     dataKey="originalPlan"
                                     name={curveType === 'pdm_based' ? 'Original' : hasRevisedSchedule ? 'Original S-Curve' : 'Target Plan %'}
                                     stroke="#2563eb"
-                                    series="target"
-                                    showDot
+                                    dotDates={originalDotDates}
+                                    animate={chartReady}
                                   />
                                   {hasRevisedSchedule && (
                                     <Line
@@ -1031,19 +1402,46 @@ export function SCurvePage() {
                                       name={curveType === 'pdm_based' ? 'Target' : 'Revised S-Curve'}
                                       stroke="#7c3aed"
                                       strokeWidth={2}
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
                                       strokeDasharray="6 4"
-                                      dot={{ r: 3, fill: '#7c3aed' }}
+                                      isAnimationActive={chartReady}
+                                      animationDuration={1200}
+                                      animationEasing="ease-out"
+                                      animationBegin={160}
+                                      dot={(props) => (
+                                        <MarkerDot
+                                          cx={props.cx}
+                                          cy={props.cy}
+                                          payload={props.payload as ChartPoint | undefined}
+                                          dates={revisedDotDates}
+                                          fill="#7c3aed"
+                                        />
+                                      )}
+                                      activeDot={(props) => (
+                                        <MarkerDot
+                                          cx={props.cx}
+                                          cy={props.cy}
+                                          payload={props.payload as ChartPoint | undefined}
+                                          fill="#7c3aed"
+                                          active
+                                        />
+                                      )}
                                       connectNulls
                                     />
                                   )}
                                   {hasActualProgress && (
-                                    <PlanLine
+                                    <Line
+                                      type="monotone"
                                       dataKey="actual"
                                       name={curveType === 'pdm_based' ? 'Actual' : hasRevisedSchedule ? 'SWA/STEWA S-Curve' : 'Actual Plan %'}
                                       stroke="#f97316"
                                       strokeWidth={2.5}
-                                      series="actual"
-                                      showDot
+                                      isAnimationActive={chartReady}
+                                      animationDuration={1200}
+                                      animationBegin={320}
+                                      dot={false}
+                                      connectNulls
                                     />
                                   )}
                                   {hasActualProgress &&
@@ -1056,7 +1454,20 @@ export function SCurvePage() {
                                         strokeOpacity={0.35}
                                       />
                                     )}
-                                  <PercentLabels points={points} show={showPercentLabels} periodsCount={theoreticalTotalPeriods} />
+                                  <OriginalPercentLabels
+                                    points={chartPoints}
+                                    showLabels={showPercentLabels}
+                                    periodsCount={theoreticalTotalPeriods}
+                                  />
+                                  <ExtraPercentLabels
+                                    points={chartPoints}
+                                    show={showPercentLabels}
+                                    datesBySeries={extraLabelDates}
+                                  />
+                                  {/* Overlay actual markers to ensure exactly N visible orange dots when possible */}
+                                  <ZIndexLayer zIndex={DefaultZIndexes.label}>
+                                    <ActualOverlayMarkers chartPoints={chartPoints} periods={theoreticalTotalPeriods} />
+                                  </ZIndexLayer>
                                 </LineChart>
                               </ResponsiveContainer>
                               ) : (
@@ -1064,9 +1475,37 @@ export function SCurvePage() {
                                   Loading chart…
                                 </div>
                               )}
+                              </div>
+                              <div className="flex flex-wrap items-center justify-center gap-x-8 gap-y-2 border-t border-border/80 bg-card/80 px-4 py-3">
+                                <LegendItem
+                                  color="#f97316"
+                                  label={
+                                    curveType === 'pdm_based'
+                                      ? 'Actual'
+                                      : hasRevisedSchedule
+                                        ? 'SWA/STEWA'
+                                        : 'Actual'
+                                  }
+                                />
+                                <LegendItem
+                                  color="#2563eb"
+                                  label={
+                                    curveType === 'pdm_based' || hasRevisedSchedule
+                                      ? 'Original'
+                                      : 'Target plan'
+                                  }
+                                />
+                                {hasRevisedSchedule && (
+                                  <LegendItem
+                                    color="#7c3aed"
+                                    label={curveType === 'pdm_based' ? 'Target' : 'Revised'}
+                                    dashed
+                                  />
+                                )}
+                              </div>
                             </div>
 
-                            <details className="mt-6 rounded-xl border border-border bg-surface-muted/30">
+                            <details className="mt-4 rounded-xl border border-border bg-surface-muted/30">
                               <summary className="cursor-pointer select-none px-4 py-3 text-sm font-semibold text-text">
                                 Point values table
                                 <span className="ml-2 font-normal text-text-muted">({points.length} periods)</span>
@@ -1195,14 +1634,28 @@ export function SCurvePage() {
                   {periods.length > 0 && (
                           <div className="rounded-2xl border border-border bg-card p-6 shadow-sm">
                             <h2 className="text-lg font-semibold text-text">
-                              {reportingInterval === '10_day'
-                                ? '10-day target accomplishment baseline'
-                                : 'Monthly target accomplishment baseline'}
+                              {reportingInterval === '5_day'
+                                ? '5-day target accomplishment baseline'
+                                : reportingInterval === '10_day'
+                                  ? '10-day target accomplishment baseline'
+                                  : reportingInterval === '15_day'
+                                    ? '15-day target accomplishment baseline'
+                                    : reportingInterval === '20_day'
+                                      ? '20-day target accomplishment baseline'
+                                      : 'Monthly target accomplishment baseline'}
                             </h2>
                             <p className="mt-1 text-sm text-text-muted">
-                              {reportingInterval === '10_day'
-                                ? 'Each period uses a 10-day baseline. Target this period can be edited. Cumulative target stays on the original S-curve.'
-                                : 'Each month uses a 30-day baseline. Target this period can be edited. Cumulative target stays on the original S-curve.'}
+                              {reportingInterval === '30_day'
+                                ? 'Each month uses a 30-day baseline. Target this period can be edited. Cumulative target stays on the original S-curve.'
+                                : `Each period uses a ${
+                                    reportingInterval === '5_day'
+                                      ? '5'
+                                      : reportingInterval === '10_day'
+                                        ? '10'
+                                        : reportingInterval === '15_day'
+                                          ? '15'
+                                          : '20'
+                                  }-day baseline. Target this period can be edited. Cumulative target stays on the original S-curve.`}
                             </p>
                             {periodSaveError && (
                               <p className="mt-2 text-sm text-red-600">{periodSaveError}</p>
@@ -1344,7 +1797,7 @@ export function SCurvePage() {
                         <div className="text-right">
                           <p className="text-xs uppercase tracking-wide text-text-muted">Total contract amount</p>
                           <p className="text-lg font-semibold text-text">P {formatMoney(costSummary.totalContractAmount)}</p>
-                          <p className="text-xs text-text-muted">Total WT% {costSummary.totalWeightPct.toFixed(2)}%</p>
+                          <p className="text-xs text-text-muted">Mapped WT% {costSummary.totalWeightPct.toFixed(2)}%</p>
                         </div>
                       </div>
 
@@ -1653,50 +2106,85 @@ export function SCurvePage() {
             {chartReady ? (
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart
-                  data={points}
+                  data={chartPoints}
                   margin={{
-                    top: showPercentLabels ? 28 : 10,
-                    right: showPercentLabels ? 28 : 20,
+                    top: showPercentLabels ? 28 : 8,
+                    right: showPercentLabels ? 28 : 16,
                     left: 0,
-                    bottom: showPercentLabels ? 8 : 0,
+                    bottom: 4,
                   }}
                 >
-                                  <CartesianGrid stroke="#e6ecf2" strokeDasharray="3 3" />
+                  <CartesianGrid stroke="#e6ecf2" vertical={false} />
                   <XAxis
-                    dataKey="date"
+                    dataKey="t"
+                    type="number"
+                    scale="time"
+                    domain={['dataMin', 'dataMax']}
+                    tickFormatter={(value) => formatAxisDate(Number(value))}
                     tick={{ fill: '#5a6b7d', fontSize: 11 }}
                     angle={-32}
                     textAnchor="end"
                     height={42}
                     minTickGap={72}
+                    axisLine={false}
+                    tickLine={false}
                   />
                   <YAxis
                     domain={[0, 100]}
                     ticks={[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]}
+                    interval={0}
                     tick={{ fill: '#5a6b7d', fontSize: 11 }}
                     tickFormatter={(v) => `${v}%`}
                     width={40}
+                    axisLine={false}
+                    tickLine={false}
                   />
                   <Tooltip />
-                  <Legend />
                   <PlanLine
                     dataKey="originalPlan"
                     name={curveType === 'pdm_based' ? 'Original' : hasRevisedSchedule ? 'Original S-Curve' : 'Target Plan'}
                     stroke="#2563eb"
-                    series="target"
-                    showDot={showPercentLabels}
+                    dotDates={originalDotDates}
                   />
                   {hasRevisedSchedule && (
-                    <Line type="monotone" dataKey="currentPlan" name={curveType === 'pdm_based' ? 'Target' : 'Revised S-Curve'} stroke="#7c3aed" strokeWidth={2} strokeDasharray="6 4" dot={false} connectNulls />
+                    <Line
+                      type="monotone"
+                      dataKey="currentPlan"
+                      name={curveType === 'pdm_based' ? 'Target' : 'Revised S-Curve'}
+                      stroke="#7c3aed"
+                      strokeWidth={2}
+                      strokeDasharray="6 4"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      dot={(props) => (
+                        <MarkerDot
+                          cx={props.cx}
+                          cy={props.cy}
+                          payload={props.payload as ChartPoint | undefined}
+                          dates={revisedDotDates}
+                          fill="#7c3aed"
+                        />
+                      )}
+                      connectNulls
+                    />
                   )}
                   <PlanLine
                     dataKey="actual"
                     name={curveType === 'pdm_based' ? 'Actual' : hasRevisedSchedule ? 'SWA/STEWA S-Curve' : 'Actual Plan'}
                     stroke="#f97316"
-                    series="actual"
-                    showDot={showPercentLabels}
+                    strokeWidth={2.5}
+                    dotDates={actualDotDates}
                   />
-                  <PercentLabels points={points} show={showPercentLabels} periodsCount={theoreticalTotalPeriods} />
+                  <OriginalPercentLabels
+                    points={chartPoints}
+                    showLabels={showPercentLabels}
+                    periodsCount={theoreticalTotalPeriods}
+                  />
+                  <ExtraPercentLabels
+                    points={chartPoints}
+                    show={showPercentLabels}
+                    datesBySeries={extraLabelDates}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             ) : (

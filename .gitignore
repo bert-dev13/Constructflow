@@ -15,8 +15,10 @@ out
 .next
 *.local
 .env
-.vercel
+.env.local
+.env.*
 !.env.example
+.vercel
 
 # Editor directories and files
 .vscode/*
@@ -33,11 +35,16 @@ out
 storage/reports/*
 !storage/reports/.gitkeep
 
+# Local S-Curve debug captures
+scurve-debug.json
+scurve-selection-debug.json
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
 # Local cloud credentials
 .secrets/
 *firebase-adminsdk*.json
-.firebase-cli/
-.firebase-tmp/
 .firebase-cli/
 .firebase-tmp/
 .env*

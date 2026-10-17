@@ -255,6 +255,51 @@ export function calculatePlannedPercentage(input: {
 }
 
 /**
+ * Revised / Target STEWA planned % with dated suspension freeze.
+ * During a suspension window the curve stays at the pre-suspension sine value;
+ * after the window the full suspensionDays are subtracted from elapsed.
+ */
+export function revisedStewaPlannedPercent(input: {
+  noticeToProceed: string;
+  contractDurationDays: number;
+  asOf: string;
+  suspensionDays?: number;
+  suspensionStart?: string | null;
+  suspensionEnd?: string | null;
+}): number | null {
+  const duration = input.contractDurationDays;
+  const noticeToProceed = input.noticeToProceed.trim();
+  const asOf = input.asOf.trim().slice(0, 10);
+  if (!noticeToProceed || !asOf || !(duration > 0)) return null;
+
+  const periodStart = addCalendarDays(noticeToProceed, 9);
+  if (!periodStart || asOf < periodStart) return null;
+  if (asOf === periodStart) return 0;
+
+  const suspDays = Math.max(0, input.suspensionDays ?? 0);
+  const sStart = input.suspensionStart?.slice(0, 10) || '';
+  const sEnd = input.suspensionEnd?.slice(0, 10) || '';
+  const hasWindow = !!(sStart && sEnd && sEnd >= sStart && suspDays > 0);
+
+  let effectiveAsOf = asOf;
+  let effectiveSusp = hasWindow ? 0 : suspDays;
+
+  if (hasWindow && asOf >= sStart && asOf <= sEnd) {
+    const dayBefore = addCalendarDays(sStart, -1);
+    effectiveAsOf = dayBefore && dayBefore >= periodStart ? dayBefore : periodStart;
+    effectiveSusp = 0;
+  } else if (hasWindow && asOf > sEnd) {
+    effectiveSusp = suspDays;
+  }
+
+  const span = excelDateDiff(effectiveAsOf, periodStart);
+  if (span == null) return null;
+  const planned = plannedSinePercent(Math.max(0, span + 1 - effectiveSusp), duration);
+  if (planned == null || !Number.isFinite(planned)) return null;
+  return Math.round((planned + Number.EPSILON) * 100) / 100;
+}
+
+/**
  * First date the planned sine reaches 100 on the way up (elapsed = contract duration).
  * Earlier dates can also print 100 when a large suspension makes elapsed a negative full cycle.
  * Those dates are still calculated by {@link calculatePlannedPercentage}; this date is the completion point.

@@ -60,7 +60,7 @@ export interface SCurveComparison {
   target_php: number;
   actual_pct: number;
   variance_pct: number;
-  status: 'on_schedule' | 'ahead' | 'behind';
+  status: 'target_only' | 'on_schedule' | 'ahead' | 'behind';
   status_label: string;
 }
 
@@ -84,6 +84,8 @@ export function getSCurve(
     period_edits: Record<string, import('./sCurvePeriods').SCurvePeriodEdit>;
     total_contract_amount: number;
     total_weight_pct: number;
+    weight_note: string;
+    pay_item_mappings: import('./sCurveCostWeights').SCurvePayItemMappingLine[];
     synced_from_pdm: boolean;
     has_actual_progress: boolean;
     has_revised_schedule: boolean;

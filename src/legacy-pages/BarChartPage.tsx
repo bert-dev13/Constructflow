@@ -43,13 +43,22 @@ const STATUS_COLORS = {
 
 function buildGroups(totalDays: number, reportingInterval: SCurveReportingInterval) {
   const groups: { label: string; start: number; end: number }[] = [];
-  const span = reportingInterval === '10_day' ? 10 : 30;
+  const span =
+    reportingInterval === '5_day'
+      ? 5
+      : reportingInterval === '10_day'
+        ? 10
+        : reportingInterval === '15_day'
+          ? 15
+          : reportingInterval === '20_day'
+            ? 20
+            : 30;
   let day = 1;
   let index = 1;
   while (day <= totalDays) {
     const end = Math.min(day + span - 1, totalDays);
     groups.push({
-      label: reportingInterval === '10_day' ? `Days ${day}-${end}` : `Month ${index}`,
+      label: reportingInterval === '30_day' ? `Month ${index}` : `Days ${day}-${end}`,
       start: day,
       end,
     });
@@ -374,7 +383,10 @@ export function BarChartPage() {
                     }
                     className="bg-transparent text-xs font-semibold text-text outline-none"
                   >
+                    <option value="5_day">5-day</option>
                     <option value="10_day">10-day</option>
+                    <option value="15_day">15-day</option>
+                    <option value="20_day">20-day</option>
                     <option value="30_day">30-day</option>
                   </select>
                 </label>
@@ -408,7 +420,16 @@ export function BarChartPage() {
                   {curveType === 'ideal_theoretical' ? 'Theoretical' : 'PDM target'}
                 </span>
                 <span className="rounded-lg border border-border bg-surface px-2.5 py-1.5 font-semibold text-text">
-                  {reportingInterval === '10_day' ? '10-day' : '30-day'} interval
+                  {reportingInterval === '5_day'
+                    ? '5-day'
+                    : reportingInterval === '10_day'
+                      ? '10-day'
+                      : reportingInterval === '15_day'
+                        ? '15-day'
+                        : reportingInterval === '20_day'
+                          ? '20-day'
+                          : '30-day'}{' '}
+                  interval
                 </span>
                 <span className="rounded-lg border border-amber-200 bg-amber-50 px-2.5 py-1.5 font-semibold text-amber-900">
                   View only

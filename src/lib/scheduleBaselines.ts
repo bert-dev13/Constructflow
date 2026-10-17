@@ -110,6 +110,54 @@ export function inclusiveDayCount(start: string, end: string): number {
   return Math.round((e - s) / 86_400_000) + 1;
 }
 
+/** PDM weight cumulative on a calendar date (Target fallback when no STEWA plan). */
+export function pdmPlannedPercentOnDate(input: {
+  projectStart: string;
+  activities: PdmActivity[];
+  costItems: SCurveCostItem[];
+  date: string;
+  suspension?: SuspensionWindow | null;
+}): number {
+  const projectStart = input.projectStart.slice(0, 10);
+  const date = input.date.slice(0, 10);
+  if (!projectStart || !date || date <= projectStart || input.activities.length === 0) return 0;
+
+  const weightById = new Map(
+    input.costItems.map((item) => [item.activityId, Number(item.weightPct) || 0]),
+  );
+  const costItems: SCurveCostItem[] = input.activities.map((activity) => ({
+    activityId: activity.id,
+    itemNo: activity.number,
+    description: activity.name,
+    quantity: 0,
+    unitCost: 0,
+    amount: 0,
+    weightPct: weightById.get(activity.id) ?? 0,
+  }));
+
+  if (input.suspension) {
+    return revisedCumulativeOnDay({
+      projectStart,
+      activities: input.activities,
+      costItems,
+      suspension: input.suspension,
+      date,
+    });
+  }
+
+  const day = inclusiveDayCount(projectStart, date);
+  let total = 0;
+  for (const activity of input.activities) {
+    const weight = weightById.get(activity.id) ?? 0;
+    if (weight <= 0) continue;
+    const { startDay, endDay } = activityDaySpan(activity);
+    const span = endDay - startDay + 1;
+    if (span <= 0 || day < startDay) continue;
+    total += (weight * (Math.min(endDay, day) - startDay + 1)) / span;
+  }
+  return Math.min(100, Math.round(total * 100) / 100);
+}
+
 export function readSuspensionWindow(input: {
   baselineMode?: string | null;
   status?: string | null;

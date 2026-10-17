@@ -5,11 +5,15 @@ export interface ReportProgressEntry {
   reportNumber: string;
   reportType: string;
   date: string;
+  /** SWA as-of range start (yyyy-mm-dd), when the report covers a date range. */
+  asOfStart?: string;
   /** Printed reporting period, such as "July 6–10, 2026" or "July 20, 2026". */
   asOfLabel?: string;
   percent: number;
   label: string;
   status: string;
+  /** STEWA printed / calculated planned % (Target), when available. */
+  stewaPlannedPercent?: number;
   /** STEWA formula inputs. The planned percent is recalculated from these, not copied from the report. */
   planNoticeToProceed?: string;
   planContractDuration?: number;

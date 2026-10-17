@@ -328,9 +328,9 @@ export function SwaStewaEditorPage() {
   const [searchParams] = useSearchParams();
   const idParam =
     routeId
-    || searchParams.get('id')
-    || pathname.match(/\/swa-stewa\/edit\/([^/]+)/)?.[1];
-  const copyFromId = searchParams.get('copy') || '';
+    || searchParams?.get('id')
+    || pathname?.match(/\/swa-stewa\/edit\/([^/]+)/)?.[1];
+  const copyFromId = searchParams?.get('copy') || '';
   const { user } = useAuth();
   const { projectId: selectedProjectId, setProjectId: setSelectedProjectId } = useSelectedProject();
   const initialProjectRef = useRef(selectedProjectId);

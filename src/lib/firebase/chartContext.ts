@@ -12,7 +12,7 @@ import {
 } from '../scheduleBaselines';
 import { deduplicateActivities } from '../pdm';
 import type { SCurveReportingInterval } from '../sCurvePeriods';
-import { intervalDays } from '../sCurvePeriods';
+import { intervalDays, isSCurveReportingInterval } from '../sCurvePeriods';
 import { COLLECTIONS, sCurveSnapshotsPath } from './collections';
 import { db } from './config';
 import { asId, nowIso } from './ids';
@@ -53,6 +53,8 @@ export interface ChartSettings {
 export interface ProjectChartContext {
   projectId: string;
   projectStart: string;
+  /** Project Details start_date only (null when unset — not today fallback). */
+  originalProjectStart: string | null;
   projectPlannedEnd: string | null;
   /** Project contract amount (₱) — used when S-Curve cost rows are empty. */
   projectContractAmount: number;
@@ -88,10 +90,9 @@ function normalizeSettings(
   raw: Record<string, unknown> | null,
   projectDuration: number,
 ): ChartSettings {
-  const reportingInterval =
-    raw?.reportingInterval === '10_day' || raw?.reportingInterval === '30_day'
-      ? (raw.reportingInterval as SCurveReportingInterval)
-      : '30_day';
+  const reportingInterval = isSCurveReportingInterval(raw?.reportingInterval)
+    ? raw.reportingInterval
+    : '30_day';
   const curveType =
     raw?.activeCurveType === 'ideal_theoretical'
       ? ('ideal_theoretical' as const)
@@ -216,6 +217,7 @@ export async function loadProjectChartContext(
 
     const projectStart =
       projectResult?.project.start_date || nowIso().slice(0, 10);
+    const originalProjectStart = projectResult?.project.start_date ?? null;
     const projectPlannedEnd = projectResult?.project.planned_end_date ?? null;
     const projectContractAmount = Number(projectResult?.project.contract_amount ?? 0) || 0;
     const baselineMode =
@@ -238,6 +240,7 @@ export async function loadProjectChartContext(
     const ctx: ProjectChartContext = {
       projectId: id,
       projectStart,
+      originalProjectStart,
       projectPlannedEnd,
       projectContractAmount,
       baselineMode,

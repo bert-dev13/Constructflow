@@ -18,7 +18,7 @@ const STATUS_LABELS: Record<string, string> = {
 
 export function VerifyPage() {
   const [params] = useSearchParams();
-  const qr = params.get('qr');
+  const qr = params?.get('qr');
   const [loading, setLoading] = useState(!!qr);
   const [valid, setValid] = useState(false);
   const [verified, setVerified] = useState(false);

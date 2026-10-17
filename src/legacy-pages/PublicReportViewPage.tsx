@@ -26,11 +26,11 @@ export function PublicReportViewPage() {
   const { reportNumber: routeReportNumber } = useParams<{ reportNumber: string }>();
   const pathname = usePathname();
   const [searchParams] = useSearchParams();
-  const reportId = decodeKey(searchParams.get('id'));
+  const reportId = decodeKey(searchParams?.get('id'));
   const reportNumber = decodeKey(
     routeReportNumber
-      || searchParams.get('reportNumber')
-      || pathname.match(/\/reports\/view\/([^/?#]+)/)?.[1]
+      || searchParams?.get('reportNumber')
+      || pathname?.match(/\/reports\/view\/([^/?#]+)/)?.[1]
       || '',
   );
   const lookupKey = reportId || reportNumber;

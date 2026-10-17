@@ -316,6 +316,21 @@ body {
   animation: landing-node-pop 0.8s ease-out both;
 }
 
+@keyframes scurve-rise {
+  0% {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  100% {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.scurve-stage {
+  animation: scurve-rise 0.55s both;
+}
+
 @media (prefers-reduced-motion: reduce) {
   .landing-rise,
   .landing-fade,
@@ -332,7 +347,8 @@ body {
   .schedule-tab-ink,
   .pdm-edge-draw,
   .pdm-node-in,
-  .pdm-label-in {
+  .pdm-label-in,
+  .scurve-stage {
     animation: none;
   }
 

@@ -84,11 +84,7 @@ function SeriesDot({
   const target = payload?.originalPlan;
   const actual = payload?.actual;
   const close =
-    target != null &&
-    actual != null &&
-    Number.isFinite(target) &&
-    Number.isFinite(actual) &&
-    Math.abs(target - actual) <= 2;
+    target != null && actual != null && Number.isFinite(target) && Number.isFinite(actual) && Math.abs(target - actual) <= 2;
   if (!showDot && !close) return <g />;
   if (close && series === 'target') {
     return <circle cx={cx} cy={cy} r={7} fill="#2563eb" />;
@@ -144,12 +140,31 @@ function PlanLine({
   );
 }
 
-function PercentLabels({ points, show }: { points: SCurvePoint[]; show: boolean }) {
+function PercentLabels({
+  points,
+  show,
+  periodsCount,
+}: {
+  points: SCurvePoint[];
+  show: boolean;
+  periodsCount?: number;
+}) {
   const xScale = useXAxisScale();
   const yScale = useYAxisScale();
   const plot = usePlotArea();
   if (!show || !xScale || !yScale) return null;
   const fontSize = 10;
+  // Choose display dates (sampled) and thin them by pixel gap to avoid overcrowding.
+  const sampledDates = originalCurveDisplayDates(points, periodsCount ?? 7);
+  const xForDate = (d: string) => {
+    try {
+      return xScale(d, { position: 'middle' }) as number | null;
+    } catch {
+      return null;
+    }
+  };
+  const displayDatesSet = new Set(thinDatesByPixelGap(sampledDates, xForDate, 36));
+
   const seeds = points.flatMap((point) =>
     (['original', 'revised', 'actual'] as const).flatMap((series) => {
       const value =
@@ -162,6 +177,9 @@ function PercentLabels({ points, show }: { points: SCurvePoint[]; show: boolean 
       ) {
         return [];
       }
+      // Only show labels on sampled/thinned dates
+      const dateKey = point.date?.slice(0, 10);
+      if (!displayDatesSet.has(dateKey ?? '')) return [];
       const x = xScale(point.date, { position: 'middle' });
       const y = yScale(value);
       if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) return [];
@@ -257,6 +275,7 @@ export function SCurvePage() {
   const canEditPeriods = canEditSCurvePeriods(user?.role);
   const canEditCostItems = canEditCharts;
   const costSummary = useMemo(() => computeSCurveCostSummary(costItems), [costItems]);
+  // No module-level dot-date workaround (removed).
   const [activeTab, setActiveTab] = useState<SCurveTab>('curve');
   const costPaging = usePagination(costSummary.items, { resetKey: `${projectId}-${viewingSnapshotId ?? 'live'}` });
   const activityPaging = usePagination(activities, { resetKey: projectId });
@@ -391,6 +410,33 @@ export function SCurvePage() {
     getSCurve(projectId, viewingSnapshotId)
       .then((res) => {
         setPoints(res.points);
+        // Debug hook: POST final chart data to local API for analysis.
+        try {
+          void fetch('/api/debug/save_scurve', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              projectId,
+              viewingSnapshotId,
+              reportingInterval: res.reporting_interval,
+              curveType: res.curve_type,
+              points: res.points,
+              activities: res.activities,
+              periods: res.periods,
+              comparisons: res.comparisons,
+              reportFeed: res.report_feed,
+              versions: res.versions,
+              latestReportDate: res.latest_report_date,
+              projectStartDate: res.project_start_date,
+              projectEndDate: res.project_end_date,
+              totalContractAmount: res.total_contract_amount,
+              targetPlanPercent: res.target_plan_percent,
+              actualPlanPercent: res.actual_plan_percent,
+            }),
+          });
+        } catch {
+          /* ignore debug failures */
+        }
         setActivities(res.activities);
         setCostItems(res.cost_items ?? []);
         setPeriods(res.periods ?? []);
@@ -901,19 +947,21 @@ export function SCurvePage() {
                                     bottom: showPercentLabels ? 8 : 0,
                                   }}
                                 >
-                                  <CartesianGrid stroke="#e0dfd8" strokeDasharray="3 3" />
+                                  <CartesianGrid stroke="#e6ecf2" strokeDasharray="3 3" />
                                   <XAxis
                                     dataKey="date"
-                                    tick={{ fill: '#000000', fontSize: 10 }}
-                                    angle={-35}
+                                    tick={{ fill: '#5a6b7d', fontSize: 11 }}
+                                    angle={-32}
                                     textAnchor="end"
-                                    height={60}
+                                    height={42}
+                                    minTickGap={72}
                                   />
                                   <YAxis
                                     domain={[0, 100]}
                                     ticks={[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]}
-                                    tick={{ fill: '#000000', fontSize: 11 }}
+                                    tick={{ fill: '#5a6b7d', fontSize: 11 }}
                                     tickFormatter={(v) => `${v}%`}
+                                    width={40}
                                   />
                                   <Tooltip
                                     content={({ active, payload, label }) => {
@@ -1008,7 +1056,7 @@ export function SCurvePage() {
                                         strokeOpacity={0.35}
                                       />
                                     )}
-                                  <PercentLabels points={points} show={showPercentLabels} />
+                                  <PercentLabels points={points} show={showPercentLabels} periodsCount={theoreticalTotalPeriods} />
                                 </LineChart>
                               </ResponsiveContainer>
                               ) : (
@@ -1613,13 +1661,21 @@ export function SCurvePage() {
                     bottom: showPercentLabels ? 8 : 0,
                   }}
                 >
-                  <CartesianGrid stroke="#e0dfd8" strokeDasharray="3 3" />
-                  <XAxis dataKey="date" tick={{ fill: '#000000', fontSize: 10 }} angle={-35} textAnchor="end" height={60} />
+                                  <CartesianGrid stroke="#e6ecf2" strokeDasharray="3 3" />
+                  <XAxis
+                    dataKey="date"
+                    tick={{ fill: '#5a6b7d', fontSize: 11 }}
+                    angle={-32}
+                    textAnchor="end"
+                    height={42}
+                    minTickGap={72}
+                  />
                   <YAxis
                     domain={[0, 100]}
                     ticks={[0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100]}
-                    tick={{ fill: '#000000', fontSize: 11 }}
+                    tick={{ fill: '#5a6b7d', fontSize: 11 }}
                     tickFormatter={(v) => `${v}%`}
+                    width={40}
                   />
                   <Tooltip />
                   <Legend />
@@ -1640,7 +1696,7 @@ export function SCurvePage() {
                     series="actual"
                     showDot={showPercentLabels}
                   />
-                  <PercentLabels points={points} show={showPercentLabels} />
+                  <PercentLabels points={points} show={showPercentLabels} periodsCount={theoreticalTotalPeriods} />
                 </LineChart>
               </ResponsiveContainer>
             ) : (

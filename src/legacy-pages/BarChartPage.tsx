@@ -106,14 +106,15 @@ export function BarChartPage() {
   const [previewOpen, setPreviewOpen] = useState(false);
 
   const renderedTasks = useMemo(
-    () =>
-      deduplicateBarTasks(
-        tasks,
-        suspensionWindow
+    () => {
+      // Only apply suspension-based splitting when the user is viewing the revised baseline.
+      const suspension =
+        baselineView === 'revised' && suspensionWindow
           ? { startDay: suspensionWindow.startDay, endDay: suspensionWindow.endDay }
-          : null,
-      ),
-    [tasks, suspensionWindow],
+          : null;
+      return deduplicateBarTasks(tasks, suspension);
+    },
+    [tasks, suspensionWindow, baselineView],
   );
 
   const barChartPdfInput = () => ({

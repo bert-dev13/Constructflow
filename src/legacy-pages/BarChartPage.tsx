@@ -17,6 +17,7 @@ import { buildTheoreticalBarChartTasks } from '../lib/sCurvePeriods';
 import { PreviewModal } from '../components/ui/PreviewModal';
 import { canEditProjectCharts } from '../lib/chartPermissions';
 import { deduplicateBarTasks } from '../lib/scheduleBaselines';
+import { getLocalChartViewMode, setLocalChartViewMode } from '../lib/chartViewPreferences';
 
 function getScheduleStatus(
   plannedEnd: number,
@@ -155,6 +156,26 @@ export function BarChartPage() {
     }
   };
 
+  const [projectStartDate, setProjectStartDate] = useState<string | null>(null);
+  const [rawScheduleData, setRawScheduleData] = useState<
+    Awaited<ReturnType<typeof getBarChart>>['schedule'] | null
+  >(null);
+
+  const handleSelectCurveType = (nextCurveType: SCurveType) => {
+    setCurveType(nextCurveType);
+    setLocalChartViewMode(user, projectId, 'barchart', nextCurveType);
+    if (canEditCharts) {
+      void persistScheduleSettings({ curveType: nextCurveType });
+    }
+  };
+
+  useEffect(() => {
+    const saved = getLocalChartViewMode(user, projectId, 'barchart');
+    if (saved) {
+      setCurveType(saved);
+    }
+  }, [user, projectId]);
+
   useEffect(() => {
     let cancelled = false;
     (async () => {
@@ -164,53 +185,22 @@ export function BarChartPage() {
         const payload = await getBarChart(projectId);
         const data = payload.schedule;
         if (!cancelled) {
-          setCurveType(payload.curve_type);
+          const savedPref = getLocalChartViewMode(user, projectId, 'barchart');
+          if (savedPref) {
+            setCurveType(savedPref);
+          } else {
+            setCurveType(payload.curve_type);
+          }
           setReportingInterval(payload.reporting_interval);
           setTheoreticalTotalPeriods(payload.theoretical_total_periods);
           setBaselineSets(payload.baselines ?? null);
           setSuspensionWindow(payload.suspension_window ?? null);
-          if (payload.baselines && payload.curve_type !== 'ideal_theoretical') {
-            const chosen = baselineView === 'original' ? payload.baselines.original : payload.baselines.revised;
-            setTasks(deduplicateBarTasks(chosen.tasks));
-            setTotalDays(chosen.totalDays);
-            setTimeNow(0);
-            setReportFeed(payload.report_feed ?? []);
-            setLatestReportPercent(data.latestReportPercent ?? null);
-            setLatestReportDate(data.latestReportDate ?? null);
-            setTargetPlanPercent(payload.target_plan_percent ?? null);
-            setActualPlanPercent(payload.actual_plan_percent ?? null);
-            setProgressStatus(payload.schedule_status ?? null);
-          } else if (payload.curve_type === 'ideal_theoretical' && payload.project_start_date) {
-            const theoretical = buildTheoreticalBarChartTasks({
-              totalPeriods: payload.theoretical_total_periods,
-              reportingInterval: payload.reporting_interval,
-            });
-            const applied = applyReportProgressToBarChart(
-              theoretical.tasks,
-              payload.report_feed ?? [],
-              payload.project_start_date,
-              theoretical.totalDays,
-            );
-            setTasks(deduplicateBarTasks(applied.tasks));
-            setTotalDays(theoretical.totalDays);
-            setTimeNow(applied.timeNow);
-            setReportFeed(payload.report_feed ?? []);
-            setLatestReportPercent(applied.latestPercent);
-            setLatestReportDate(applied.latestReportDate);
-            setTargetPlanPercent(payload.target_plan_percent ?? null);
-            setActualPlanPercent(payload.actual_plan_percent ?? null);
-            setProgressStatus(payload.schedule_status ?? null);
-          } else {
-            setTasks(deduplicateBarTasks(data.barChartTasks));
-            setTotalDays(data.barChartTotalDays);
-            setTimeNow(data.barChartTimeNow);
-            setReportFeed(data.reportFeed ?? payload.report_feed ?? []);
-            setLatestReportPercent(data.latestReportPercent ?? null);
-            setLatestReportDate(data.latestReportDate ?? null);
-            setTargetPlanPercent(payload.target_plan_percent ?? data.targetPlanPercent ?? null);
-            setActualPlanPercent(payload.actual_plan_percent ?? data.actualPlanPercent ?? null);
-            setProgressStatus(payload.schedule_status ?? data.progressStatus ?? null);
-          }
+          setProjectStartDate(payload.project_start_date ?? null);
+          setRawScheduleData(data ?? null);
+          setReportFeed(payload.report_feed ?? data?.reportFeed ?? []);
+          setTargetPlanPercent(payload.target_plan_percent ?? data?.targetPlanPercent ?? null);
+          setActualPlanPercent(payload.actual_plan_percent ?? data?.actualPlanPercent ?? null);
+          setProgressStatus(payload.schedule_status ?? data?.progressStatus ?? null);
         }
       } catch (e) {
         if (!cancelled) {
@@ -223,15 +213,51 @@ export function BarChartPage() {
     return () => {
       cancelled = true;
     };
-  }, [projectId, settingsVersion]);
+  }, [projectId, settingsVersion, user]);
 
   useEffect(() => {
-    if (!baselineSets || curveType === 'ideal_theoretical') return;
-    const chosen = baselineView === 'original' ? baselineSets.original : baselineSets.revised;
-    setTasks(deduplicateBarTasks(chosen.tasks));
-    setTotalDays(chosen.totalDays);
-    setTimeNow(0);
-  }, [baselineSets, baselineView, curveType]);
+    if (curveType === 'ideal_theoretical' && projectStartDate) {
+      const theoretical = buildTheoreticalBarChartTasks({
+        totalPeriods: theoreticalTotalPeriods,
+        reportingInterval,
+      });
+      const applied = applyReportProgressToBarChart(
+        theoretical.tasks,
+        reportFeed,
+        projectStartDate,
+        theoretical.totalDays,
+      );
+      setTasks(deduplicateBarTasks(applied.tasks));
+      setTotalDays(theoretical.totalDays);
+      setTimeNow(applied.timeNow);
+      setLatestReportPercent(applied.latestPercent);
+      setLatestReportDate(applied.latestReportDate);
+    } else if (curveType === 'pdm_based') {
+      if (baselineSets) {
+        const chosen = baselineView === 'original' ? baselineSets.original : baselineSets.revised;
+        setTasks(deduplicateBarTasks(chosen.tasks));
+        setTotalDays(chosen.totalDays);
+        setTimeNow(0);
+      } else if (rawScheduleData) {
+        setTasks(deduplicateBarTasks(rawScheduleData.barChartTasks));
+        setTotalDays(rawScheduleData.barChartTotalDays);
+        setTimeNow(rawScheduleData.barChartTimeNow);
+      }
+      if (rawScheduleData) {
+        setLatestReportPercent(rawScheduleData.latestReportPercent ?? null);
+        setLatestReportDate(rawScheduleData.latestReportDate ?? null);
+      }
+    }
+  }, [
+    curveType,
+    baselineView,
+    baselineSets,
+    rawScheduleData,
+    projectStartDate,
+    reportFeed,
+    theoreticalTotalPeriods,
+    reportingInterval,
+  ]);
 
   const days = useMemo(
     () => Array.from({ length: totalDays }, (_, i) => i + 1),
@@ -336,39 +362,39 @@ export function BarChartPage() {
               </div>
             )}
 
+            <div
+              role="group"
+              aria-label="Schedule basis"
+              className="flex shrink-0 rounded-lg bg-surface-muted p-0.5"
+            >
+              <button
+                type="button"
+                onClick={() => handleSelectCurveType('pdm_based')}
+                disabled={settingsSaving}
+                className={`rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors duration-200 ${
+                  curveType === 'pdm_based'
+                    ? 'bg-primary text-white shadow-sm'
+                    : 'text-text-muted hover:text-text'
+                }`}
+              >
+                PDM target
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSelectCurveType('ideal_theoretical')}
+                disabled={settingsSaving}
+                className={`rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors duration-200 ${
+                  curveType === 'ideal_theoretical'
+                    ? 'bg-primary text-white shadow-sm'
+                    : 'text-text-muted hover:text-text'
+                }`}
+              >
+                Theoretical
+              </button>
+            </div>
+
             {canEditCharts ? (
               <>
-                <div
-                  role="group"
-                  aria-label="Schedule basis"
-                  className="flex shrink-0 rounded-lg bg-surface-muted p-0.5"
-                >
-                  <button
-                    type="button"
-                    onClick={() => void persistScheduleSettings({ curveType: 'pdm_based' })}
-                    disabled={settingsSaving}
-                    className={`rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors duration-200 ${
-                      curveType === 'pdm_based'
-                        ? 'bg-primary text-white shadow-sm'
-                        : 'text-text-muted hover:text-text'
-                    }`}
-                  >
-                    PDM target
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void persistScheduleSettings({ curveType: 'ideal_theoretical' })}
-                    disabled={settingsSaving}
-                    className={`rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors duration-200 ${
-                      curveType === 'ideal_theoretical'
-                        ? 'bg-primary text-white shadow-sm'
-                        : 'text-text-muted hover:text-text'
-                    }`}
-                  >
-                    Theoretical
-                  </button>
-                </div>
-
                 <label className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs transition focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/20">
                   <span className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">
                     Interval
@@ -416,9 +442,6 @@ export function BarChartPage() {
               </>
             ) : (
               <div className="flex shrink-0 flex-wrap items-center gap-1.5 text-xs">
-                <span className="rounded-md bg-primary px-2.5 py-1.5 font-semibold text-white shadow-sm">
-                  {curveType === 'ideal_theoretical' ? 'Theoretical' : 'PDM target'}
-                </span>
                 <span className="rounded-lg border border-border bg-surface px-2.5 py-1.5 font-semibold text-text">
                   {reportingInterval === '5_day'
                     ? '5-day'

@@ -125,9 +125,24 @@ async function resolveRecipients(
   idToken: string,
   projectId: string,
   project: Record<string, unknown>,
+  report?: Record<string, unknown>,
 ) {
   const recipients: { email: string; name: string }[] = [];
   const covered = new Set<string>();
+  const approvalFlow = (report?.approvalFlow as Record<string, any>) || {};
+  const stageSignatories = [
+    approvalFlow.contractorConfirmation?.userId,
+    approvalFlow.contractorConfirmation?.approvedBy,
+    approvalFlow.engineer1?.userId,
+    approvalFlow.engineer1?.approvedBy,
+    approvalFlow.engineer2?.userId,
+    approvalFlow.engineer2?.approvedBy,
+    approvalFlow.engineer3?.userId,
+    approvalFlow.engineer3?.approvedBy,
+    approvalFlow.engineer4?.userId,
+    approvalFlow.engineer4?.approvedBy,
+  ];
+
   const ids = [
     ...new Set(
       [
@@ -135,9 +150,13 @@ async function resolveRecipients(
         ...stringArray(project.assignedUserIds),
         ...stringArray(project.involvedUserIds),
         ...stringArray(project.accessUserIds),
+        typeof report?.contractorId === 'string' ? report.contractorId : '',
+        typeof report?.createdBy === 'string' ? report.createdBy : '',
+        ...stageSignatories.map((id) => (typeof id === 'string' ? id : '')),
       ].filter(Boolean),
     ),
   ];
+
   for (const id of ids) {
     const user = await readDoc(idToken, `users/${id}`);
     if (!user || user.isActive === false) continue;
@@ -147,17 +166,27 @@ async function resolveRecipients(
     remember(recipients, email, String(user.fullName ?? ''));
     covered.add(role);
   }
-  for (const role of ['engineer_3', 'engineer_4'] as const) {
+
+  for (const role of FINAL_ROLES) {
     if (covered.has(role)) continue;
     const users = await queryByRole(idToken, role);
     for (const user of users) {
       if (user.isActive === false) continue;
       const accessible = stringArray(user.accessibleProjectIds);
-      const covers = accessible.includes(projectId) || accessible.length === 0;
+      const assigned = stringArray(user.assignedProjectIds);
+      const involved = stringArray(user.involvedProjectIds);
+      const covers =
+        accessible.includes(projectId) ||
+        assigned.includes(projectId) ||
+        involved.includes(projectId) ||
+        accessible.length === 0;
       if (!covers) continue;
       remember(recipients, String(user.email ?? ''), String(user.fullName ?? ''));
+      covered.add(role);
+      break;
     }
   }
+
   return recipients;
 }
 
@@ -198,10 +227,18 @@ export async function POST(request: Request) {
     const project = await readDoc(idToken, `projects/${projectId}`);
     if (!project) return NextResponse.json({ error: 'Project not found.' }, { status: 404 });
 
-    const recipients = await resolveRecipients(idToken, projectId, project);
+    const recipients = await resolveRecipients(idToken, projectId, project, report);
     if (recipients.length === 0) {
       return NextResponse.json({ error: 'No recipient email addresses are stored for this project.' }, { status: 409 });
     }
+
+    const recipientEmails = recipients.map((r) => r.email);
+    const uniqueEmails = new Set(recipientEmails.map((e) => e.toLowerCase()));
+    const duplicateCount = recipientEmails.length - uniqueEmails.size;
+
+    console.log(`Resolved recipient count = ${recipientEmails.length}`);
+    console.log(`Recipient addresses = [${recipientEmails.join(', ')}]`);
+    console.log(`Duplicate recipients = ${duplicateCount}`);
 
     const host = process.env.SMTP_HOST;
     const user = process.env.SMTP_USER;
@@ -233,46 +270,65 @@ export async function POST(request: Request) {
       auth: { user, pass },
     });
     const subject = `ConstructFlow - Project Approved - ${projectName}`;
-    const messageIds: string[] = [];
-    for (const recipient of recipients) {
-      const text = [
-        `Dear ${recipient.name},`,
-        '',
-        'The following ConstructFlow project has completed the required approval workflow:',
-        '',
-        'Project:',
-        projectName,
-        '',
-        'Status:',
-        'APPROVED',
-        '',
-        'The project has been fully approved by the required approving personnel.',
-        '',
-        attachment ? `The approved ${reportType} report is attached.` : `The approved ${reportType} report is recorded in ConstructFlow.`,
-        '',
-        'Regards,',
-        '',
-        'ConstructFlow',
-        "Provincial Engineer's Office",
-        'Construction Division',
-      ].join('\n');
-      const sent = await transport.sendMail({
-        from,
-        replyTo: user,
-        to: recipient.email,
-        envelope: { from: user, to: recipient.email },
-        subject,
-        text,
-        html: `<p>Dear ${escapeHtml(recipient.name)},</p><p>The following ConstructFlow project has completed the required approval workflow:</p><p><strong>Project:</strong><br>${escapeHtml(projectName)}</p><p><strong>Status:</strong><br>APPROVED</p><p>The project has been fully approved by the required approving personnel.</p><p>${attachment ? `The approved ${escapeHtml(reportType)} report is attached.` : `The approved ${escapeHtml(reportType)} report is recorded in ConstructFlow.`}</p><p>Regards,</p><p><strong>ConstructFlow</strong><br>Provincial Engineer's Office<br>Construction Division</p>`,
-        attachments: attachment ? [attachment] : undefined,
-      });
-      if (typeof sent.messageId === 'string') messageIds.push(sent.messageId);
+
+    const text = [
+      'Dear ConstructFlow Project Stakeholders,',
+      '',
+      'The following ConstructFlow project has completed the required approval workflow:',
+      '',
+      'Project:',
+      projectName,
+      '',
+      'Report:',
+      `${reportType} (${reportNumber})`,
+      '',
+      'Status:',
+      'APPROVED',
+      '',
+      'The project has been fully approved by the required approving personnel (Contractor, Engineer I, Engineer II, Engineer III, and Engineer IV).',
+      '',
+      attachment ? `The approved ${reportType} report is attached.` : `The approved ${reportType} report is recorded in ConstructFlow.`,
+      '',
+      'Regards,',
+      '',
+      'ConstructFlow',
+      "Provincial Engineer's Office",
+      'Construction Division',
+    ].join('\n');
+
+    const html = `<p>Dear ConstructFlow Project Stakeholders,</p><p>The following ConstructFlow project has completed the required approval workflow:</p><p><strong>Project:</strong><br>${escapeHtml(projectName)}</p><p><strong>Report:</strong><br>${escapeHtml(reportType)} (${escapeHtml(reportNumber)})</p><p><strong>Status:</strong><br>APPROVED</p><p>The project has been fully approved by the required approving personnel (Contractor, Engineer I, Engineer II, Engineer III, and Engineer IV).</p><p>${attachment ? `The approved ${escapeHtml(reportType)} report is attached.` : `The approved ${escapeHtml(reportType)} report is recorded in ConstructFlow.`}</p><p>Regards,</p><p><strong>ConstructFlow</strong><br>Provincial Engineer's Office<br>Construction Division</p>`;
+
+    const sent = await transport.sendMail({
+      from,
+      replyTo: user,
+      to: recipientEmails,
+      envelope: { from: user, to: recipientEmails },
+      subject,
+      text,
+      html,
+      attachments: attachment ? [attachment] : undefined,
+    });
+
+    console.log('Nodemailer send result:');
+    console.log('  messageId:', sent.messageId);
+    console.log('  envelope.from:', sent.envelope?.from);
+    console.log('  envelope.to:', sent.envelope?.to);
+    console.log('  accepted[]:', sent.accepted);
+    console.log('  rejected[]:', sent.rejected);
+    console.log('  response:', sent.response);
+
+    if (Array.isArray(sent.rejected) && sent.rejected.length > 0) {
+      throw new Error(`Email rejected for recipients: ${sent.rejected.join(', ')}`);
     }
 
     return NextResponse.json({
       sent: true,
-      recipients: recipients.map((recipient) => recipient.email),
-      messageId: messageIds[0] ?? null,
+      recipients: recipientEmails,
+      messageId: sent.messageId ?? null,
+      envelope: sent.envelope,
+      accepted: sent.accepted,
+      rejected: sent.rejected,
+      response: sent.response,
       sentAt: new Date().toISOString(),
     });
   } catch (err) {

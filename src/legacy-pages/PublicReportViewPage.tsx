@@ -8,6 +8,7 @@ import { useAuth } from '../context/AuthContext';
 import { downloadReportPreviewPdf } from '../lib/downloadReportPdf';
 import { buildOfficialReportHtml } from '../lib/officialReportHtml';
 import { printPreviewIframe } from '../lib/previewHelpers';
+import { displayReportNumber } from '../lib/reportNumber';
 import { trackReportViewed } from '../lib/recentViewed';
 import { buildReportPreviewHtml } from '../lib/reportVerification';
 import { getReport, type SwaStewaReport } from '../lib/swaStewaApi';
@@ -90,7 +91,7 @@ export function PublicReportViewPage() {
     try {
       const frame = document.getElementById('official-report-frame') as HTMLIFrameElement | null;
       await downloadReportPreviewPdf({
-        fileName: `${report.report_number || report.report_type || 'report'}.pdf`,
+        fileName: `${displayReportNumber(report) || report.report_type || 'report'}.pdf`,
         pdfUrl: report.pdf_file,
         frame,
       });
@@ -164,12 +165,12 @@ export function PublicReportViewPage() {
 
       <div className="mx-auto max-w-[1400px] px-3 py-4 sm:px-6">
         <p className="mb-3 text-center text-sm text-text-muted">
-          {report.report_type} · {report.report_number}
+          {report.report_type} · {displayReportNumber(report)}
         </p>
         <section className="overflow-hidden rounded-2xl border border-border bg-white shadow-sm">
           <iframe
             id="official-report-frame"
-            title={`${report.report_number} official report`}
+            title={`${displayReportNumber(report)} official report`}
             srcDoc={previewHtml}
             className="h-[calc(100vh-140px)] min-h-[640px] w-full border-0 bg-white"
           />

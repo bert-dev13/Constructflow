@@ -152,15 +152,23 @@ export function formatReportDisplayDate(
     const period = String(data.period ?? data.period_covered ?? '').trim();
     if (period) return formatExcelDate(period);
   } else if (reportType === 'STEWA') {
-    const reportDate = String(data.report_date ?? data.as_of ?? '').trim();
-    if (reportDate) return formatExcelDate(reportDate);
     const periodStart = String(data.period_start ?? '').trim();
     const periodEnd = String(data.period_end ?? '').trim();
     if (periodStart && periodEnd) {
+      const ranged = formatSwaDateRange(periodStart, periodEnd);
+      if (ranged) return ranged;
       return `${formatExcelDate(periodStart)} to ${formatExcelDate(periodEnd)}`;
     }
     const periodCovered = String(data.period_covered ?? data.week_covered ?? '').trim();
-    if (periodCovered) return formatExcelDate(periodCovered);
+    if (periodCovered) {
+      // Keep human range labels (e.g. "July 6–12, 2026") as-is.
+      if (/[\u2013\u2014\-]| to /i.test(periodCovered)) {
+        return periodCovered.replace(/^As of\s+/i, '').trim();
+      }
+      return formatExcelDate(periodCovered);
+    }
+    const reportDate = String(data.report_date ?? data.as_of ?? '').trim();
+    if (reportDate) return formatExcelDate(reportDate);
   } else if (reportType === 'IAR') {
     const reportDate = String(data.report_date ?? data.as_of ?? '').trim();
     if (reportDate) return formatExcelDate(reportDate);

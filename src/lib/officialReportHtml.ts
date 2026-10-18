@@ -1,5 +1,6 @@
 import type { SwaStewaReport } from './swaStewaApi';
 import { BASE_URL } from './paths';
+import { displayReportNumber } from './reportNumber';
 import { formatExcelDate, formatSwaAsOfLabel, stewaDash, stewaPercentText } from './stewaCalculations';
 import {
   computeWorkItems,
@@ -181,6 +182,7 @@ function normalizeLineItems(raw: unknown): WorkItem[] {
     const item = (entry ?? {}) as Record<string, unknown>;
     return {
       id: String(item.id ?? `row-${index}`),
+      isSection: Boolean(item.isSection ?? item.is_section),
       payItemId: item.payItemId != null ? String(item.payItemId) : undefined,
       payItemVersion: item.payItemVersion != null ? Number(item.payItemVersion) : undefined,
       snapshotItemNo: item.snapshotItemNo != null ? String(item.snapshotItemNo) : undefined,
@@ -251,31 +253,32 @@ export function buildOfficialSwaHtml(
   const rows = items
     .map((row) => {
       const section = isSectionRow(row);
-      let html = '<tr>';
-      html += `<td>${escapeHtml(String(row.itemNo || row.snapshotItemNo || ''))}</td>`;
-      html += `<td class="left">${escapeHtml(String(row.description || row.snapshotDescription || ''))}</td>`;
-      if (row.isSection) {
-        const blanks = showRevised ? 13 : 10;
-        html += '<td></td>'.repeat(blanks);
+      if (row.isSection || section) {
+        let html = '<tr class="section-row">';
+        html += `<td class="center"><strong>${escapeHtml(String(row.itemNo || row.snapshotItemNo || ''))}</strong></td>`;
+        html += `<td class="left" colspan="${showRevised ? 14 : 11}"><strong>${escapeHtml(String(row.description || row.snapshotDescription || ''))}</strong></td>`;
         html += '</tr>';
         return html;
       }
-      html += `<td class="right">${qtyCell(row.programmedQty, section)}</td>`;
-      html += `<td class="right">${moneyCell(row.unitPrice, section)}</td>`;
-      html += `<td>${escapeHtml(String(row.unit || row.snapshotUnit || ''))}</td>`;
-      html += `<td class="right">${moneyCell(row.contractAmount, section)}</td>`;
-      html += `<td class="right">${section ? '' : `${formatPct(row.weightPct)}%`}</td>`;
+      let html = '<tr>';
+      html += `<td class="center">${escapeHtml(String(row.itemNo || row.snapshotItemNo || ''))}</td>`;
+      html += `<td class="left">${escapeHtml(String(row.description || row.snapshotDescription || ''))}</td>`;
+      html += `<td class="right">${qtyCell(row.programmedQty, false)}</td>`;
+      html += `<td class="right">${moneyCell(row.unitPrice, false)}</td>`;
+      html += `<td class="center">${escapeHtml(String(row.unit || row.snapshotUnit || ''))}</td>`;
+      html += `<td class="right">${moneyCell(row.contractAmount, false)}</td>`;
+      html += `<td class="right">${formatPct(row.weightPct)}%</td>`;
       if (showRevised) {
         const rq = row.revisedQty ?? 0;
         html += `<td class="right">${rq > 0 ? formatPct(rq) : ''}</td>`;
         html += `<td class="right">${moneyCell(row.revisedAmount, true)}</td>`;
-        html += `<td class="right">${section ? '' : `${formatPct(row.revisedWeightPct)}%`}</td>`;
+        html += `<td class="right">${formatPct(row.revisedWeightPct)}%</td>`;
       }
       html += `<td class="right">${row.previous ? moneyCell(row.previous, true) : ''}</td>`;
-      html += `<td class="right">${section ? '' : (row.thisPeriod ? moneyCell(row.thisPeriod) : '-')}</td>`;
-      html += `<td class="right">${section ? '' : (row.toDate ? moneyCell(row.toDate) : '-')}</td>`;
-      html += `<td class="right">${section ? '' : `${formatPct(row.accomplishmentWeightPct)}%`}</td>`;
-      html += `<td>${escapeHtml(String(row.remarks || ''))}</td>`;
+      html += `<td class="right">${row.thisPeriod ? moneyCell(row.thisPeriod) : '-'}</td>`;
+      html += `<td class="right">${row.toDate ? moneyCell(row.toDate) : '-'}</td>`;
+      html += `<td class="right">${formatPct(row.accomplishmentWeightPct)}%</td>`;
+      html += `<td class="center">${escapeHtml(String(row.remarks || ''))}</td>`;
       html += '</tr>';
       return html;
     })
@@ -285,29 +288,99 @@ export function buildOfficialSwaHtml(
     String(data.project_name ?? data.project_title ?? report.project_name ?? ''),
   );
   const location = escapeHtml(String(data.location ?? ''));
+  const contractor = escapeHtml(field(data, 'contractor'));
+  const contractAmountFormatted = moneyField(data, 'contract_amount');
   const lessReason = escapeHtml(lessReasonOf(data));
+
+  const reportNo = displayReportNumber({
+    report_type: 'SWA',
+    report_number: report.report_number,
+    report_data: data,
+  });
 
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><style>
-@page { size: 13in 8.5in; margin: 25px 30px 60px 30px; }
+@page { size: 13in 8.5in; margin: 0.16in 0.22in 0.16in 0.22in; }
 ${SHARED_CSS}
-body { font-size: 7pt; }
-.summary { margin-top: 12px; float: right; width: 280px; font-size: 8pt; }
-.summary td { border: none; padding: 2px 6px; }
+body { font-size: 6.7pt; padding: 0; margin: 0; color: #000; background: #fff; position: relative; }
+.report-no { font-size: 6.8pt; position: absolute; right: 0; top: 0; margin: 0; color: #444; }
+.letterhead { margin: 0 0 1px 0; width: 100%; }
+.letterhead .seal { width: 36px; }
+.letterhead .seal img { width: 30px !important; height: 30px !important; }
+.letterhead .gov { font-size: 6.5pt; line-height: 1.05; }
+.letterhead .prov { font-size: 8.5pt; font-weight: bold; line-height: 1.1; margin-top: 0.5px; letter-spacing: 0.2px; }
+.letterhead .addr { font-size: 6.5pt; line-height: 1.05; margin-top: 0.5px; }
+.letterhead .office { font-size: 7.5pt; font-weight: bold; line-height: 1.1; text-decoration: underline; margin-top: 0.5px; }
+h3, .doc-title { margin: 1px 0 0.5px 0; font-size: 8.5pt; font-weight: bold; letter-spacing: 0.3px; line-height: 1.1; }
+.meta { margin-bottom: 2px; font-size: 6.7pt; line-height: 1.15; text-align: center; }
+.meta .as-of { font-size: 6.7pt; margin-bottom: 0.5px; }
+.meta .proj-title { font-size: 7.1pt; font-weight: bold; margin-bottom: 0.5px; }
+.meta .proj-info { font-size: 6.7pt; }
+table.grid { width: 100%; border-collapse: collapse; table-layout: fixed; margin: 0; }
+table.grid th, table.grid td { border: 1px solid #000; padding: 0.6px 2.5px; font-size: 6.7pt; line-height: 1.08; vertical-align: middle; box-sizing: border-box; }
+table.grid th { background: #f0f0f0; font-size: 6.4pt; font-weight: bold; text-align: center; padding: 1.2px 2px; }
+table.grid td.center { text-align: center; }
+table.grid td.left { text-align: left; white-space: normal; overflow-wrap: break-word; word-break: normal; }
+table.grid td.right { text-align: right; white-space: nowrap; }
+table.grid tr.section-row td { font-weight: bold; background: #f7f7f7; padding: 0.6px 2.5px; }
+table.grid tr.total-row td { font-weight: bold; background: #f0f0f0; padding: 0.8px 2.5px; }
+.summary { margin-top: 1px; float: right; width: 240px; font-size: 6.6pt; }
+.summary td { border: none; padding: 0.3px 2px; line-height: 1.08; }
 .summary .label { text-align: left; }
-.summary .val { text-align: right; font-weight: bold; }
+.summary .val { text-align: right; font-weight: bold; white-space: nowrap; }
+.signatures { clear: both; margin-top: 2px; width: 100%; font-size: 6.6pt; display: flex; justify-content: space-between; gap: 6px; }
+.sig { flex: 1; text-align: center; vertical-align: top; overflow-wrap: break-word; }
+.sig-mark { min-height: 16px; margin-top: 1px; display: flex; align-items: flex-end; justify-content: center; }
+.sig-image { max-width: 85px; max-height: 18px; object-fit: contain; }
+.sig-initials { font-family: "Segoe Script", "Brush Script MT", cursive; font-size: 10pt; line-height: 1; letter-spacing: 0.5px; }
+.sig-name { font-weight: bold; text-decoration: underline; margin-top: 1px; min-height: 1.1em; text-transform: uppercase; font-size: 6.6pt; overflow-wrap: break-word; }
+.sig-title { font-size: 6.0pt; margin-top: 0.5px; }
+.sig-date { font-size: 5.5pt; margin-top: 0.5px; }
+tr, .signatures, .summary { break-inside: avoid; page-break-inside: avoid; }
 </style></head><body>
-<div class="report-no">${escapeHtml(report.report_number)}</div>
+<div class="report-no">${escapeHtml(reportNo)}</div>
 ${letterheadHtml()}
 <h3>STATEMENT OF WORK ACCOMPLISHMENT</h3>
 <div class="meta">
-  As of <u>${escapeHtml(formatSwaAsOfLabel(data))}</u><br>
-  <strong>${projectName}</strong><br>
-  ${location}<br>
-  Contractor: ${escapeHtml(field(data, 'contractor'))}<br>
-  Contract amount: ${moneyField(data, 'contract_amount')}
+  <div class="as-of">As of <u>${escapeHtml(formatSwaAsOfLabel(data))}</u></div>
+  <div class="proj-title"><strong>${projectName}</strong></div>
+  <div class="proj-info">${location ? `${location} &nbsp;&bull;&nbsp; ` : ''}Contractor: <strong>${contractor}</strong> &nbsp;&bull;&nbsp; Contract amount: <strong>${contractAmountFormatted}</strong></div>
 </div>
 <table class="grid">
+  ${
+    showRevised
+      ? `<colgroup>
+    <col style="width: 5.0%;">
+    <col style="width: 34.0%;">
+    <col style="width: 5.0%;">
+    <col style="width: 5.5%;">
+    <col style="width: 3.5%;">
+    <col style="width: 6.5%;">
+    <col style="width: 4.0%;">
+    <col style="width: 5.0%;">
+    <col style="width: 6.5%;">
+    <col style="width: 4.0%;">
+    <col style="width: 5.5%;">
+    <col style="width: 5.5%;">
+    <col style="width: 5.5%;">
+    <col style="width: 4.0%;">
+    <col style="width: 5.5%;">
+  </colgroup>`
+      : `<colgroup>
+    <col style="width: 5.2%;">
+    <col style="width: 43.8%;">
+    <col style="width: 6.5%;">
+    <col style="width: 6.5%;">
+    <col style="width: 4.0%;">
+    <col style="width: 7.5%;">
+    <col style="width: 4.5%;">
+    <col style="width: 6.0%;">
+    <col style="width: 6.0%;">
+    <col style="width: 6.0%;">
+    <col style="width: 4.5%;">
+    <col style="width: 5.5%;">
+  </colgroup>`
+  }
   <thead>
     <tr>
       <th rowspan="2">ITEM NO.</th>
@@ -320,7 +393,7 @@ ${letterheadHtml()}
       ${showRevised ? '<th colspan="3">REVISED</th>' : ''}
       <th colspan="3">ACCOMPLISHMENT</th>
       <th rowspan="2">WEIGHT %</th>
-      <th rowspan="2">REMARKS/STATUS</th>
+      <th rowspan="2">REMARKS /<br>STATUS</th>
     </tr>
     <tr>
       ${showRevised ? '<th>QUANTITY</th><th>AMOUNT</th><th>WEIGHT %</th>' : ''}
@@ -332,7 +405,7 @@ ${letterheadHtml()}
   <tbody>
     ${rows}
     <tr class="total-row">
-      <td colspan="5">TOTAL</td>
+      <td colspan="5" class="center">TOTAL</td>
       <td class="right">${formatMoney(totals.totalContractAmount)}</td>
       <td class="right">${formatPct(totals.totalWeightPct)}%</td>
       ${

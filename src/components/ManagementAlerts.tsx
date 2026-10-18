@@ -5,6 +5,7 @@ import { Link } from '../lib/nextRouter';
 import type { Role } from '../types';
 import { listProjects, type ProjectRow } from '../lib/projectsApi';
 import { listReports, type SwaStewaReport } from '../lib/swaStewaApi';
+import { displayReportNumber } from '../lib/reportNumber';
 import { NavIcon } from './NavIcon';
 
 const APPROVED_STATUSES = new Set(['approved', 'generated']);
@@ -66,7 +67,7 @@ function ContractorIarAlerts() {
                   >
                     <div className="min-w-0">
                       <p className="truncate font-medium text-text">{projectTitleOf(r)}</p>
-                      <p className="truncate font-mono text-xs text-text-muted">{r.report_number}</p>
+                      <p className="truncate font-mono text-xs text-text-muted">{displayReportNumber(r)}</p>
                     </div>
                     <span
                       className={`shrink-0 rounded-full px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wide ${

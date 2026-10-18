@@ -39,6 +39,9 @@ storage/reports/*
 scurve-debug.json
 scurve-selection-debug.json
 
+# Local verification artifacts
+.tmp/
+
 # TypeScript incremental build info
 *.tsbuildinfo
 

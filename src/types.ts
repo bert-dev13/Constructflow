@@ -54,13 +54,13 @@ export const DEMO_ACCOUNTS_BY_ROLE: Record<
     { email: 'constructflow.engineerr1@gmail.com', password: 'fortesting01', name: 'Engineer I' },
   ],
   engineer_2: [
-    { email: 'constructflow.engineerii@gmail.com', password: 'EngineerII', name: 'Engineer II' },
+    { email: 'constructflow.engineerii@gmail.com', password: 'fortesting01', name: 'Engineer II' },
   ],
   engineer_3: [
-    { email: 'constructflow.engineerIII@gmail.com', password: 'Engineer 3', name: 'Engineer III' },
+    { email: 'constructflow.engineerIII@gmail.com', password: 'fortesting01', name: 'Engineer III' },
   ],
   engineer_4: [
-    { email: 'constructflow.engineer4@gmail.com', password: 'Engineer 4', name: 'Engineer IV' },
+    { email: 'constructflow.engineer4@gmail.com', password: 'fortesting01', name: 'Engineer IV' },
   ],
 };
 

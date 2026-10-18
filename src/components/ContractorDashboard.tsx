@@ -6,6 +6,7 @@ import { useSelectedProject } from '../context/SelectedProjectContext';
 import { getDashboardStats, type DashboardData } from '../lib/dashboardApi';
 import { listProjects, type ProjectRow } from '../lib/projectsApi';
 import { listReports, type SwaStewaReport } from '../lib/swaStewaApi';
+import { displayReportNumber } from '../lib/reportNumber';
 import { NavIcon, type NavIconName } from './NavIcon';
 import { ReportTypeBadge, StatusBadge } from './ui/StatusBadge';
 import { PageHeader } from './ui/PageHeader';
@@ -201,7 +202,7 @@ export function ContractorDashboard() {
             <div className="mt-4 space-y-2">
               {reports.slice(0, 5).map((report) => (
                 <Link key={report.id} to={`/swa-stewa/edit?id=${encodeURIComponent(report.id)}`} className="flex items-center justify-between gap-3 rounded-xl border border-border bg-surface-muted/40 px-3 py-2.5 hover:bg-surface-muted">
-                  <div className="min-w-0"><p className="truncate text-sm font-medium text-text">{projectTitle(report)}</p><p className="mt-0.5 text-xs text-text-muted">{report.report_number}</p></div>
+                  <div className="min-w-0"><p className="truncate text-sm font-medium text-text">{projectTitle(report)}</p><p className="mt-0.5 text-xs text-text-muted">{displayReportNumber(report)}</p></div>
                   <div className="flex shrink-0 items-center gap-2"><ReportTypeBadge type={report.report_type} /><StatusBadge status={report.status} /></div>
                 </Link>
               ))}

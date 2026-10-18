@@ -11,6 +11,7 @@ import { Pagination } from '../components/ui/Pagination';
 import { StatusBadge } from '../components/ui/StatusBadge';
 import { NavIcon, type NavIconName } from '../components/NavIcon';
 import { usePagination } from '../hooks/usePagination';
+import { displayReportNumber } from '../lib/reportNumber';
 import { formatReportDisplayDate } from '../lib/stewaCalculations';
 
 function projectTitleOf(r: SwaStewaReport): string {
@@ -74,7 +75,7 @@ export function SwaStewaHubPage() {
     const search = query.trim().toLowerCase();
     const matchesQuery =
       !search ||
-      [projectTitleOf(report), report.report_number, report.status]
+      [projectTitleOf(report), report.report_number, displayReportNumber(report), report.status]
         .some((value) => value.toLowerCase().includes(search));
     const matchesStatus = statusFilter === 'all' || report.status === statusFilter;
     return matchesQuery && matchesStatus;
@@ -155,7 +156,7 @@ export function SwaStewaHubPage() {
               <table className="w-full min-w-[850px] border-collapse text-left text-sm">
                 <thead className="bg-surface-muted/60"><tr className="border-b border-border text-[11px] uppercase tracking-wider text-text-muted"><th className="px-5 py-3 font-semibold">Report</th><th className="px-5 py-3 font-semibold">Project</th><th className="px-5 py-3 font-semibold">Report date</th><th className="px-5 py-3 font-semibold">Status</th><th className="px-5 py-3 text-right font-semibold">Action</th></tr></thead>
                 <tbody className="divide-y divide-border/80">
-                  {pageItems.map((report) => <tr key={report.id} className="transition hover:bg-surface-muted/40"><td className="px-5 py-4"><p className="font-semibold text-text">{report.report_number}</p><p className="mt-1 text-xs text-text-muted">{formatReportDisplayDate(report)}</p></td><td className="max-w-[360px] px-5 py-4"><p className="truncate font-medium text-text">{projectTitleOf(report)}</p>{report.rejection_reason && <p className="mt-1 truncate text-xs text-warning">Revision: {report.rejection_reason}</p>}</td><td className="px-5 py-4 text-text-muted">{formatReportDisplayDate(report)}</td><td className="px-5 py-4"><StatusBadge status={report.status} /></td><td className="px-5 py-4 text-right"><Link to={reportLink(report)} className="rounded-lg bg-primary-light px-3 py-1.5 text-xs font-semibold text-primary">{reportIsViewOnly(user?.role, report.report_type, report.status, report.edit_user_ids, user?.id ? String(user.id) : null) || report.status === 'generated' || report.status === 'approved' ? 'View report' : 'Open report'}</Link></td></tr>)}
+                  {pageItems.map((report) => <tr key={report.id} className="transition hover:bg-surface-muted/40"><td className="px-5 py-4"><p className="font-semibold text-text">{displayReportNumber(report)}</p><p className="mt-1 text-xs text-text-muted">{formatReportDisplayDate(report)}</p></td><td className="max-w-[360px] px-5 py-4"><p className="truncate font-medium text-text">{projectTitleOf(report)}</p>{report.rejection_reason && <p className="mt-1 truncate text-xs text-warning">Revision: {report.rejection_reason}</p>}</td><td className="px-5 py-4 text-text-muted">{formatReportDisplayDate(report)}</td><td className="px-5 py-4"><StatusBadge status={report.status} /></td><td className="px-5 py-4 text-right"><Link to={reportLink(report)} className="rounded-lg bg-primary-light px-3 py-1.5 text-xs font-semibold text-primary">{reportIsViewOnly(user?.role, report.report_type, report.status, report.edit_user_ids, user?.id ? String(user.id) : null) || report.status === 'generated' || report.status === 'approved' ? 'View report' : 'Open report'}</Link></td></tr>)}
                 </tbody>
               </table>
             </div>

@@ -1,5 +1,6 @@
 import QRCode from 'qrcode';
 import { BASE_URL } from './paths';
+import { displayReportNumber } from './reportNumber';
 
 /** Stable verification code stored on the report (qrCode / report number). */
 export function reportVerificationCode(report: {
@@ -62,8 +63,9 @@ export function buildReportPreviewHtml(report: {
     })
     .join('');
 
+  const reportNo = displayReportNumber(report);
   return `<!DOCTYPE html>
-<html><head><meta charset="utf-8"><title>${escapeHtml(report.report_number)}</title>
+<html><head><meta charset="utf-8"><title>${escapeHtml(reportNo)}</title>
 <style>
   body{font-family:Georgia,'Times New Roman',serif;color:#0f172a;margin:0;padding:32px;background:#fff}
   h1{font-size:22px;margin:0 0 4px;color:#0B3D2E}
@@ -73,7 +75,7 @@ export function buildReportPreviewHtml(report: {
   .badge{display:inline-block;padding:4px 10px;border-radius:999px;background:#ecfdf5;color:#047857;font-size:11px;font-weight:700;text-transform:uppercase}
 </style></head><body>
   <h1>ConstructFlow — ${escapeHtml(report.report_type)} Report</h1>
-  <p class="meta">${escapeHtml(report.report_number)} · ${escapeHtml(projectName)}</p>
+  <p class="meta">${escapeHtml(reportNo)} · ${escapeHtml(projectName)}</p>
   <p><span class="badge">${escapeHtml(report.status.replace(/_/g, ' '))}</span></p>
   <h2>Report details</h2>
   <table>${rows || '<tr><td style="padding:8px;color:#64748b">No field data available.</td></tr>'}</table>

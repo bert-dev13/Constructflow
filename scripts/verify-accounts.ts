@@ -27,7 +27,7 @@ const ROLE_CHECKS = [
   {
     label: 'Contractor',
     email: 'constructflow.contractor.1@gmail.com',
-    password: 'contractor123',
+    password: 'fortesting01',
     expectedRole: 'contractor',
     expectedProjects: ['demo-capitol-annex'],
   },

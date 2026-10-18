@@ -11,6 +11,7 @@ import { ProjectSelect } from '../components/ProjectSelect';
 import { WorkItemsTable } from '../components/WorkItemsTable';
 import { newIarItem, newManpowerRow, newVariationItem, type IarAccomplishmentItem, type IarManpowerRow, type IarVariationItem } from '../lib/iarItems';
 import { computeStewaSlippage, computeWorkItems, newWorkItem, type WorkItem } from '../lib/workItems';
+import { displayReportNumber } from '../lib/reportNumber';
 import { applyStewaDerivedFields, formatSwaAsOfLabel, stewaDash, stewaPercentText } from '../lib/stewaCalculations';
 import { buildOfficialReportHtml } from '../lib/officialReportHtml';
 import { getProject, listProjects } from '../lib/projectsApi';
@@ -431,6 +432,12 @@ export function SwaStewaEditorPage() {
     contractorChanges.length > 0 &&
     (contractorDraftCommentMode || user?.role === 'engineer_1' || status === 'contractor_confirmed');
 
+  const shownReportNumber = displayReportNumber({
+    report_type: reportType,
+    report_number: reportNumber,
+    report_data: editor.data as Record<string, unknown>,
+  });
+
   const focusChangeField = useCallback((field: string) => {
     setActiveCommentField(field);
     const el = fieldAnchorRefs.current[field];
@@ -599,7 +606,7 @@ export function SwaStewaEditorPage() {
         if (source.report_type !== reportType) return;
         copyAppliedRef.current = copyFromId;
         carriedProjectRef.current = `${reportType}:${source.project_id}`;
-        const label = source.report_number || `the selected ${reportType}`;
+        const label = displayReportNumber(source) || `the selected ${reportType}`;
         applyCarriedReport(
           source,
           `Items copied from ${label}. Enter this period’s amounts. That report is not changed.`,
@@ -626,7 +633,7 @@ export function SwaStewaEditorPage() {
         if (lineItemsTouched.current || String(projectIdRef.current || '') !== id) return;
         const latest = latestReportForProject(res.reports, id, reportType);
         if (latest) {
-          const label = latest.report_number || `the previous ${reportType}`;
+          const label = displayReportNumber(latest) || `the previous ${reportType}`;
           const applied = applyCarriedReport(
             latest,
             `Items brought forward from ${label}. Enter this period’s amounts. The earlier report stays unchanged.`,
@@ -651,7 +658,7 @@ export function SwaStewaEditorPage() {
         });
         persistDraft.current = true;
         setCarryNote(
-          `Items brought forward from ${swa.report_number || 'the project SWA'}. Enter this week’s quantities. That SWA is not changed.`,
+          `Items brought forward from ${displayReportNumber(swa) || 'the project SWA'}. Enter this week’s quantities. That SWA is not changed.`,
         );
       })
       .catch(() => undefined);
@@ -1374,7 +1381,11 @@ export function SwaStewaEditorPage() {
       setPreviewHtml(
         buildOfficialReportHtml({
           id: reportId || '',
-          report_number: reportNumber || '',
+          report_number: displayReportNumber({
+            report_type: reportType,
+            report_number: reportNumber,
+            report_data: reportData,
+          }),
           project_id: projectId,
           report_type: reportType,
           report_data: reportData,
@@ -1399,7 +1410,7 @@ export function SwaStewaEditorPage() {
         'iframe[title="Preview"]',
       ) as HTMLIFrameElement | null;
       await downloadReportPreviewPdf({
-        fileName: `${reportNumber || reportType || 'report'}-preview.pdf`,
+        fileName: `${shownReportNumber || reportType || 'report'}-preview.pdf`,
         frame,
       });
     } catch (err) {
@@ -1674,7 +1685,7 @@ export function SwaStewaEditorPage() {
     <main className="app-main flex flex-1 flex-col overflow-y-auto">
       <PageHeader
         badge={reportType}
-        title={reportNumber ? `${reportType} — ${reportNumber}` : `New ${reportType} report`}
+        title={shownReportNumber ? `${reportType} — ${shownReportNumber}` : `New ${reportType} report`}
         status={status}
         backTo={user?.role === 'engineer_1' ? '/workflow' : user?.role === 'contractor' ? '/reports' : '/reports'}
         backLabel={user?.role === 'engineer_1' ? 'My Submissions' : 'Documents'}
@@ -1871,7 +1882,7 @@ export function SwaStewaEditorPage() {
             <p className="mt-0.5">
               {success ||
                 'This report has been submitted and is waiting for Engineer II review.'}
-              {reportNumber ? ` (${reportNumber})` : ''}
+              {shownReportNumber ? ` (${shownReportNumber})` : ''}
             </p>
           </div>
         </div>
@@ -2366,8 +2377,8 @@ export function SwaStewaEditorPage() {
           open={showSubmittedModal}
           title="Submission Successful"
           message={
-            reportNumber
-              ? `${reportType} ${reportNumber} is waiting for Engineer II review.`
+            shownReportNumber
+              ? `${reportType} ${shownReportNumber} is waiting for Engineer II review.`
               : `Your ${reportType} report is waiting for Engineer II review.`
           }
           onClose={() => setShowSubmittedModal(false)}

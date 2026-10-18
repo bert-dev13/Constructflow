@@ -45,6 +45,7 @@ import { Pagination } from '../components/ui/Pagination';
 import { PreviewModal } from '../components/ui/PreviewModal';
 import { usePagination } from '../hooks/usePagination';
 import { canEditProjectCharts, canEditSCurvePeriods } from '../lib/chartPermissions';
+import { getLocalChartViewMode, setLocalChartViewMode } from '../lib/chartViewPreferences';
 import {
   curveSeriesDisplayDates,
   originalCurveDisplayDates,
@@ -100,7 +101,8 @@ function MarkerDot({
     return <g />;
   }
   const key = payload.date.slice(0, 10);
-  if (!active && dates && !dates.has(key)) return <g />;
+  // If a dates set is provided, only render markers for those dates (covers active and inactive).
+  if (dates && !dates.has(key)) return <g />;
   return <circle cx={cx} cy={cy} r={active ? 4.5 : 3.5} fill={fill} />;
 }
 
@@ -148,6 +150,7 @@ function PlanLine({
           cx={props.cx}
           cy={props.cy}
           payload={props.payload as ChartPoint | undefined}
+          dates={dotDates}
           fill={stroke}
           active
         />
@@ -213,13 +216,10 @@ function OriginalPercentLabels({
   const sampledXs = sampled.map((date) => xForDate(date)).filter((x): x is number => x != null);
   const span = sampledXs.length >= 2 ? sampledXs[sampledXs.length - 1] - sampledXs[0] : 0;
   const autoCount = span < 1 ? 2 : Math.min(7, Math.max(2, Math.floor(span / 34) + 1));
+  // When showLabels is false, do not render percentage text labels (dots remain visible).
   const labelDates = showLabels
     ? sampled
-    : thinDatesByPixelGap(
-        originalCurveDisplayDates(points, Math.min(autoCount, count)),
-        xForDate,
-        Math.max(28, Math.min(40, (span / Math.max(1, autoCount - 1)) * 0.85)),
-      );
+    : [];
 
   const seeds = labelDates.flatMap((date) => {
     const point = byDate.get(date);
@@ -370,9 +370,11 @@ function ExtraPercentLabels({
 function ActualOverlayMarkers({
   chartPoints,
   periods,
+  swaReportDates,
 }: {
   chartPoints: ChartPoint[];
   periods: number;
+  swaReportDates?: Set<string>;
 }) {
   const xScale = useXAxisScale();
   const yScale = useYAxisScale();
@@ -394,19 +396,7 @@ function ActualOverlayMarkers({
   const uniqRange = Array.from(new Set(fullRange));
   if (uniqRange.length === 0) return null;
 
-  const N = Math.max(1, Math.floor(periods || 1));
-  const sampleDates: string[] =
-    uniqRange.length <= N
-      ? uniqRange
-      : (() => {
-          const s: string[] = [];
-          for (let i = 0; i < N; i += 1) {
-            const idx = Math.round((i * (uniqRange.length - 1)) / (N - 1));
-            const d = uniqRange[Math.min(uniqRange.length - 1, Math.max(0, idx))];
-            if (!s.includes(d)) s.push(d);
-          }
-          return s;
-        })();
+  // For Actual overlay markers: ignore `periods` and only show genuine SWA report dates.
 
   // helper: compute interpolated actual at iso date
   function interpActualAt(dateIso: string): number | null {
@@ -432,9 +422,21 @@ function ActualOverlayMarkers({
     return null;
   }
 
+  // Create final set: only genuine SWA report dates that fall within uniqRange.
+  const finalDatesSet = new Set<string>();
+  if (swaReportDates && swaReportDates.size > 0) {
+    for (const d of swaReportDates) {
+      if (d && uniqRange.includes(d)) finalDatesSet.add(d);
+    }
+  } else {
+    // No genuine SWA dates available: show no overlay dots (Actual line still renders).
+  }
+
+  const finalDates = Array.from(finalDatesSet).sort();
+
   return (
     <g>
-      {sampleDates.map((d, idx) => {
+      {finalDates.map((d, idx) => {
         const val = interpActualAt(d);
         if (val == null || !Number.isFinite(val)) return null;
         const x = xScale(Date.parse(`${d}T00:00:00Z`), { position: 'middle' }) as number | null;
@@ -570,10 +572,11 @@ export function SCurvePage() {
   }, [chartPoints, theoreticalTotalPeriods]);
  
   // Orange Actual markers must be chosen from real SWA report points only.
+  // Only treat authentic SWA reports as genuine Actual markers (exclude STEWA).
   const swaReports = useMemo(
     () =>
       reportFeed
-        .filter((r) => (r.reportType === 'SWA' || r.reportType === 'STEWA') && r.percent != null)
+        .filter((r) => r.reportType === 'SWA' && r.percent != null)
         .slice()
         .sort((a, b) => a.date.localeCompare(b.date)),
     [reportFeed],
@@ -591,15 +594,17 @@ export function SCurvePage() {
   const actualDotDates = useMemo(() => {
     if (actualCandidateDatesMemo.length === 0) return new Set<string>();
     const candidateDates = actualCandidateDatesMemo;
-    const N = Math.max(1, Math.floor(theoreticalTotalPeriods || 1));
-    if (candidateDates.length <= N) return new Set(candidateDates);
-    const sampled: string[] = [];
-    for (let i = 0; i < N; i += 1) {
-      const idx = Math.round((i * (candidateDates.length - 1)) / (N - 1));
-      const d = candidateDates[Math.min(candidateDates.length - 1, Math.max(0, idx))];
-      if (d && !sampled.includes(d)) sampled.push(d);
+    // Actual dots must come ONLY from genuine SWA report dates. Ignore Periods for Actual.
+    const union = new Set<string>();
+    try {
+      for (const r of swaReports) {
+        const d = r.date?.slice(0, 10);
+        if (d && candidateDates.includes(d)) union.add(d);
+      }
+    } catch {
+      // If swaReports unavailable or none match, leave union empty.
     }
-    return new Set(sampled);
+    return union;
   }, [actualCandidateDatesMemo, theoreticalTotalPeriods]);
 
   const extraLabelDates = useMemo(
@@ -722,10 +727,23 @@ export function SCurvePage() {
     }
   };
 
+  const handleCurveTypeChange = (nextType: SCurveType) => {
+    if (viewingSnapshotId || settingsSaving) return;
+    setCurveType(nextType);
+    setLocalChartViewMode(user, projectId, 'scurve', nextType);
+    if (canEditCharts) {
+      void persistScheduleSettings({ curveType: nextType });
+    }
+  };
+
   useEffect(() => {
+    let cancelled = false;
     setLoading(true);
-    getSCurve(projectId, viewingSnapshotId)
+    const viewPreference = getLocalChartViewMode(user, projectId, 'scurve');
+    const effectiveCurveType = viewPreference ?? curveType;
+    getSCurve(projectId, viewingSnapshotId, undefined, effectiveCurveType)
       .then((res) => {
+        if (cancelled) return;
         setPoints(res.points);
         setActivities(res.activities);
         setCostItems(res.cost_items ?? []);
@@ -744,7 +762,11 @@ export function SCurvePage() {
         setViewingSnapshotLabel(res.viewing_snapshot_label);
         setProjectStartDate(res.project_start_date ?? null);
         setProjectEndDate(res.project_end_date ?? null);
-        setCurveType(res.curve_type);
+        if (viewPreference) {
+          setCurveType(viewPreference);
+        } else {
+          setCurveType(res.curve_type);
+        }
         setReportingInterval(res.reporting_interval);
         // On first load for this project/viewing snapshot show default = 5.
         if (firstLoadRef.current) {
@@ -762,6 +784,7 @@ export function SCurvePage() {
         setCostMessage('');
       })
       .catch(() => {
+        if (cancelled) return;
         setPoints([]);
         setActivities([]);
         setCostItems([]);
@@ -791,8 +814,13 @@ export function SCurvePage() {
         setCostDirty(false);
         setCostMessage('');
       })
-      .finally(() => setLoading(false));
-  }, [projectId, viewingSnapshotId, settingsVersion]);
+      .finally(() => {
+        if (!cancelled) setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [projectId, viewingSnapshotId, curveType, settingsVersion, user]);
   // Reset first-load flag when user navigates to a different project or snapshot
   useEffect(() => {
     firstLoadRef.current = true;
@@ -891,67 +919,61 @@ export function SCurvePage() {
               </div>
             )}
 
+            <div
+              role="group"
+              aria-label="Schedule basis"
+              className="flex shrink-0 rounded-lg bg-surface-muted p-0.5"
+            >
+              <button
+                type="button"
+                onClick={() => handleCurveTypeChange('pdm_based')}
+                disabled={settingsSaving || !!viewingSnapshotId}
+                className={`rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors duration-200 ${
+                  curveType === 'pdm_based'
+                    ? 'bg-primary text-white shadow-sm'
+                    : 'text-text-muted hover:text-text'
+                }`}
+              >
+                PDM target
+              </button>
+              <button
+                type="button"
+                onClick={() => handleCurveTypeChange('ideal_theoretical')}
+                disabled={settingsSaving || !!viewingSnapshotId}
+                className={`rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors duration-200 ${
+                  curveType === 'ideal_theoretical'
+                    ? 'bg-primary text-white shadow-sm'
+                    : 'text-text-muted hover:text-text'
+                }`}
+              >
+                Theoretical
+              </button>
+            </div>
+
             {canEditCharts ? (
-              <>
-                <div
-                  role="group"
-                  aria-label="Schedule basis"
-                  className="flex shrink-0 rounded-lg bg-surface-muted p-0.5"
+              <label className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs transition focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/20">
+                <span className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">
+                  Interval
+                </span>
+                <select
+                  value={reportingInterval}
+                  disabled={settingsSaving || !!viewingSnapshotId}
+                  onChange={(e) =>
+                    void persistScheduleSettings({
+                      reportingInterval: e.target.value as SCurveReportingInterval,
+                    })
+                  }
+                  className="bg-transparent text-xs font-semibold text-text outline-none"
                 >
-                  <button
-                    type="button"
-                    onClick={() => void persistScheduleSettings({ curveType: 'pdm_based' })}
-                    disabled={settingsSaving || !!viewingSnapshotId}
-                    className={`rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors duration-200 ${
-                      curveType === 'pdm_based'
-                        ? 'bg-primary text-white shadow-sm'
-                        : 'text-text-muted hover:text-text'
-                    }`}
-                  >
-                    PDM target
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => void persistScheduleSettings({ curveType: 'ideal_theoretical' })}
-                    disabled={settingsSaving || !!viewingSnapshotId}
-                    className={`rounded-md px-2.5 py-1.5 text-xs font-semibold transition-colors duration-200 ${
-                      curveType === 'ideal_theoretical'
-                        ? 'bg-primary text-white shadow-sm'
-                        : 'text-text-muted hover:text-text'
-                    }`}
-                  >
-                    Theoretical
-                  </button>
-                </div>
-
-                <label className="inline-flex shrink-0 items-center gap-1.5 rounded-lg border border-border bg-surface px-2.5 py-1.5 text-xs transition focus-within:border-primary focus-within:ring-1 focus-within:ring-primary/20">
-                  <span className="text-[10px] font-semibold uppercase tracking-wide text-text-muted">
-                    Interval
-                  </span>
-                  <select
-                    value={reportingInterval}
-                    disabled={settingsSaving || !!viewingSnapshotId}
-                    onChange={(e) =>
-                      void persistScheduleSettings({
-                        reportingInterval: e.target.value as SCurveReportingInterval,
-                      })
-                    }
-                    className="bg-transparent text-xs font-semibold text-text outline-none"
-                  >
-                    <option value="5_day">5-day</option>
-                    <option value="10_day">10-day</option>
-                    <option value="15_day">15-day</option>
-                    <option value="20_day">20-day</option>
-                    <option value="30_day">30-day</option>
-                  </select>
-                </label>
-
-              </>
+                  <option value="5_day">5-day</option>
+                  <option value="10_day">10-day</option>
+                  <option value="15_day">15-day</option>
+                  <option value="20_day">20-day</option>
+                  <option value="30_day">30-day</option>
+                </select>
+              </label>
             ) : (
               <div className="flex shrink-0 flex-wrap items-center gap-1.5 text-xs">
-                <span className="rounded-md bg-primary px-2.5 py-1.5 font-semibold text-white shadow-sm">
-                  {curveType === 'ideal_theoretical' ? 'Theoretical' : 'PDM target'}
-                </span>
                 <span className="rounded-lg border border-border bg-surface px-2.5 py-1.5 font-semibold text-text">
                   {reportingInterval === '5_day'
                     ? '5-day'
@@ -1395,41 +1417,7 @@ export function SCurvePage() {
                                     dotDates={originalDotDates}
                                     animate={chartReady}
                                   />
-                                  {hasRevisedSchedule && (
-                                    <Line
-                                      type="monotone"
-                                      dataKey="currentPlan"
-                                      name={curveType === 'pdm_based' ? 'Target' : 'Revised S-Curve'}
-                                      stroke="#7c3aed"
-                                      strokeWidth={2}
-                                      strokeLinecap="round"
-                                      strokeLinejoin="round"
-                                      strokeDasharray="6 4"
-                                      isAnimationActive={chartReady}
-                                      animationDuration={1200}
-                                      animationEasing="ease-out"
-                                      animationBegin={160}
-                                      dot={(props) => (
-                                        <MarkerDot
-                                          cx={props.cx}
-                                          cy={props.cy}
-                                          payload={props.payload as ChartPoint | undefined}
-                                          dates={revisedDotDates}
-                                          fill="#7c3aed"
-                                        />
-                                      )}
-                                      activeDot={(props) => (
-                                        <MarkerDot
-                                          cx={props.cx}
-                                          cy={props.cy}
-                                          payload={props.payload as ChartPoint | undefined}
-                                          fill="#7c3aed"
-                                          active
-                                        />
-                                      )}
-                                      connectNulls
-                                    />
-                                  )}
+                                  {/* Target (currentPlan) intentionally rendered below after labels to ensure it appears above Original when overlapping */}
                                   {hasActualProgress && (
                                     <Line
                                       type="monotone"
@@ -1464,9 +1452,49 @@ export function SCurvePage() {
                                     show={showPercentLabels}
                                     datesBySeries={extraLabelDates}
                                   />
+                                  {hasRevisedSchedule && (
+                                    <Line
+                                      type="monotone"
+                                      dataKey="currentPlan"
+                                      name={curveType === 'pdm_based' ? 'Target' : 'Revised S-Curve'}
+                                      stroke="#7c3aed"
+                                      strokeWidth={2}
+                                      strokeLinecap="round"
+                                      strokeLinejoin="round"
+                                      strokeDasharray="6 4"
+                                      isAnimationActive={chartReady}
+                                      animationDuration={1200}
+                                      animationEasing="ease-out"
+                                      animationBegin={160}
+                                      dot={(props) => (
+                                        <MarkerDot
+                                          cx={props.cx}
+                                          cy={props.cy}
+                                          payload={props.payload as ChartPoint | undefined}
+                                          dates={revisedDotDates}
+                                          fill="#7c3aed"
+                                        />
+                                      )}
+                                      activeDot={(props) => (
+                                        <MarkerDot
+                                          cx={props.cx}
+                                          cy={props.cy}
+                                          payload={props.payload as ChartPoint | undefined}
+                                          dates={revisedDotDates}
+                                          fill="#7c3aed"
+                                          active
+                                        />
+                                      )}
+                                      connectNulls
+                                    />
+                                  )}
                                   {/* Overlay actual markers to ensure exactly N visible orange dots when possible */}
                                   <ZIndexLayer zIndex={DefaultZIndexes.label}>
-                                    <ActualOverlayMarkers chartPoints={chartPoints} periods={theoreticalTotalPeriods} />
+                                    <ActualOverlayMarkers
+                                      chartPoints={chartPoints}
+                                      periods={theoreticalTotalPeriods}
+                                      swaReportDates={new Set(swaReports.map((r) => String(r.date ?? '').slice(0, 10)))}
+                                    />
                                   </ZIndexLayer>
                                 </LineChart>
                               </ResponsiveContainer>
@@ -2146,28 +2174,7 @@ export function SCurvePage() {
                     stroke="#2563eb"
                     dotDates={originalDotDates}
                   />
-                  {hasRevisedSchedule && (
-                    <Line
-                      type="monotone"
-                      dataKey="currentPlan"
-                      name={curveType === 'pdm_based' ? 'Target' : 'Revised S-Curve'}
-                      stroke="#7c3aed"
-                      strokeWidth={2}
-                      strokeDasharray="6 4"
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      dot={(props) => (
-                        <MarkerDot
-                          cx={props.cx}
-                          cy={props.cy}
-                          payload={props.payload as ChartPoint | undefined}
-                          dates={revisedDotDates}
-                          fill="#7c3aed"
-                        />
-                      )}
-                      connectNulls
-                    />
-                  )}
+                  {/* Target (currentPlan) intentionally rendered later after labels to ensure visibility above Original when overlapping */}
                   <PlanLine
                     dataKey="actual"
                     name={curveType === 'pdm_based' ? 'Actual' : hasRevisedSchedule ? 'SWA/STEWA S-Curve' : 'Actual Plan'}
@@ -2185,6 +2192,42 @@ export function SCurvePage() {
                     show={showPercentLabels}
                     datesBySeries={extraLabelDates}
                   />
+                  {hasRevisedSchedule && (
+                    <Line
+                      type="monotone"
+                      dataKey="currentPlan"
+                      name={curveType === 'pdm_based' ? 'Target' : 'Revised S-Curve'}
+                      stroke="#7c3aed"
+                      strokeWidth={2}
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      strokeDasharray="6 4"
+                      isAnimationActive={chartReady}
+                      animationDuration={1200}
+                      animationEasing="ease-out"
+                      animationBegin={160}
+                      dot={(props) => (
+                        <MarkerDot
+                          cx={props.cx}
+                          cy={props.cy}
+                          payload={props.payload as ChartPoint | undefined}
+                          dates={revisedDotDates}
+                          fill="#7c3aed"
+                        />
+                      )}
+                      activeDot={(props) => (
+                        <MarkerDot
+                          cx={props.cx}
+                          cy={props.cy}
+                          payload={props.payload as ChartPoint | undefined}
+                          dates={revisedDotDates}
+                          fill="#7c3aed"
+                          active
+                        />
+                      )}
+                      connectNulls
+                    />
+                  )}
                 </LineChart>
               </ResponsiveContainer>
             ) : (

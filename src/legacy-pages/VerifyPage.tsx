@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Link, useSearchParams } from '../lib/nextRouter';
 import { Logo } from '../components/Logo';
 import { SYSTEM_NAME } from '../lib/branding';
+import { displayReportNumber } from '../lib/reportNumber';
 import { verifyReportQr } from '../lib/swaStewaApi';
 
 const STATUS_LABELS: Record<string, string> = {
@@ -90,7 +91,9 @@ export function VerifyPage() {
             <dl className="mt-6 space-y-3 text-left text-sm">
               <div className="flex justify-between gap-4">
                 <dt className="text-text-muted">Report No.</dt>
-                <dd className="font-mono text-right font-semibold">{report.report_number}</dd>
+                <dd className="font-mono text-right font-semibold">
+                  {displayReportNumber(report)}
+                </dd>
               </div>
               <div className="flex justify-between gap-4">
                 <dt className="text-text-muted">Project</dt>

@@ -86,7 +86,8 @@ function wrapTableCells(root: HTMLElement) {
     wrapper.style.whiteSpace = 'normal';
     wrapper.style.overflowWrap = 'anywhere';
     wrapper.style.wordBreak = 'break-word';
-    wrapper.style.lineHeight = '1.3';
+    wrapper.style.lineHeight = style?.lineHeight && style.lineHeight !== 'normal' ? style.lineHeight : '1.14';
+    wrapper.style.fontSize = style?.fontSize || 'inherit';
     wrapper.style.textAlign = style?.textAlign || 'left';
     while (cell.firstChild) wrapper.appendChild(cell.firstChild);
     cell.appendChild(wrapper);
@@ -142,6 +143,11 @@ async function waitForImages(doc: Document) {
   );
 }
 
+function isSwaLandscapePage(page: PageBox): boolean {
+  // Official SWA uses 13in × 8.5in (Legal landscape).
+  return page.widthMm > page.heightMm && page.widthMm >= 320 && page.heightMm <= 230;
+}
+
 async function rasterize(element: HTMLElement, page: PageBox, format: 'PNG' | 'JPEG'): Promise<Blob> {
   wrapTableCells(element);
   await new Promise((resolve) => window.requestAnimationFrame(() => resolve(undefined)));
@@ -164,9 +170,28 @@ async function rasterize(element: HTMLElement, page: PageBox, format: 'PNG' | 'J
   });
   const scale = canvas.width / Math.max(element.scrollWidth, 1);
   const pageCssHeight = (page.heightMm / page.widthMm) * Math.max(element.scrollWidth, 1);
-  const cuts = rowBreaks(element, pageCssHeight);
   const contentCssWidth = Math.max(element.scrollWidth, 1);
 
+  // SWA must always be exactly one landscape bond page.
+  if (isSwaLandscapePage(page)) {
+    const fullCssHeight = Math.max(element.scrollHeight, 1);
+    const fit = Math.min(1, pageCssHeight / fullCssHeight);
+    const drawW = page.widthMm;
+    const drawH = Math.min(page.heightMm, (fullCssHeight / contentCssWidth) * page.widthMm * fit);
+    const offsetX = 0;
+    const offsetY = Math.max(0, (page.heightMm - drawH) / 2);
+    pdf.addImage(
+      format === 'JPEG' ? canvas.toDataURL('image/jpeg', 0.95) : canvas.toDataURL('image/png'),
+      format,
+      offsetX,
+      offsetY,
+      drawW,
+      drawH,
+    );
+    return pdf.output('blob');
+  }
+
+  const cuts = rowBreaks(element, pageCssHeight);
   cuts.forEach((start, index) => {
     const end = index + 1 < cuts.length ? cuts[index + 1]! : element.scrollHeight;
     const srcY = Math.max(0, Math.round(start * scale));

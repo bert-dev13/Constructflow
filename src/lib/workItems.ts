@@ -1,5 +1,6 @@
 export interface WorkItem {
   id: string;
+  isSection?: boolean;
   payItemId?: string;
   payItemVersion?: number;
   snapshotItemNo?: string;
@@ -76,10 +77,11 @@ function isRomanNumeral(token: string): boolean {
 export function isSwaSectionHeading(itemNo: string): boolean {
   const text = itemNo.trim();
   if (!text) return false;
-  if (/^[IVXLCDM]+(?:\s*[.\-–—:])?\s*$/i.test(text)) {
-    return isRomanNumeral(text.replace(/[^IVXLCDM]/gi, ''));
+  if (/^[IVXLCDM]+(?:\.[A-Za-z]+)?(?:\s*[.\-–—:])?\s*$/i.test(text)) {
+    const roman = text.replace(/[^IVXLCDM]/gi, '');
+    return isRomanNumeral(roman);
   }
-  const titled = text.match(/^([IVXLCDM]+)\s*[.\-–—:]\s+[A-Za-z]/i);
+  const titled = text.match(/^([IVXLCDM]+)(?:\.[A-Za-z]+)?\s*[.\-–—:]\s+[A-Za-z]/i);
   return titled != null && isRomanNumeral(titled[1] ?? '');
 }
 
@@ -88,6 +90,7 @@ export function isSwaSectionHeading(itemNo: string): boolean {
  * on a heading stays stored, but the row is not a pay item.
  */
 export function isSwaSectionRow(item: WorkItem): boolean {
+  if (item.isSection) return true;
   const itemNo = String(item.snapshotItemNo || item.itemNo || '').trim();
   const description = String(item.snapshotDescription || item.description || '').trim();
   if (isSwaSectionHeading(itemNo)) return true;

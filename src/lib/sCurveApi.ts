@@ -70,8 +70,9 @@ export function getSCurve(
   projectId: string | number = '1',
   snapshotId?: string | number | null,
   reportingInterval?: import('./sCurvePeriods').SCurveReportingInterval,
+  curveType?: SCurveType,
 ) {
-  return getSCurveFs(projectId, snapshotId, reportingInterval) as Promise<{
+  return getSCurveFs(projectId, snapshotId, reportingInterval, curveType ? { curveType } : undefined) as Promise<{
     project_id: string;
     project_duration: number;
     project_start_date: string;

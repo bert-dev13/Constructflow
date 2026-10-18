@@ -5,6 +5,7 @@ import {
   formatExcelDate,
   formatSwaAsOfLabel,
 } from '../stewaCalculations';
+import { displayReportNumber } from '../reportNumber';
 import { computeWorkItems, type WorkItem } from '../workItems';
 import { COLLECTIONS } from './collections';
 import { db } from './config';
@@ -77,7 +78,11 @@ function mapProgressDocs(
     );
     if (!date) continue;
 
-    const reportNumber = String(data.reportNumber ?? d.id);
+    const reportNumber = displayReportNumber({
+      report_type: reportType,
+      report_number: String(data.reportNumber ?? d.id),
+      report_data: reportData,
+    });
     const planDuration = Number(reportData.contract_duration);
     const planSuspension = Number(reportData.approved_time_suspension ?? 0);
     const ntp = String(reportData.notice_to_proceed ?? '').trim();

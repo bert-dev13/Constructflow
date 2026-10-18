@@ -35,6 +35,7 @@ import { syncProgressCharts } from './sCurves';
 import { getPayItem, type PayItem } from './payItems';
 import { BASE_URL } from '../paths';
 import { pickProjectSwa, pickProjectStewa, stewaPlannedPct, swaPhysicalAccomplishmentPct } from '../iarProgress';
+import { buildReportNumberFromData, displayReportNumber } from '../reportNumber';
 import { designationForRole, safeSignatureSrc } from '../signatories';
 
 function enrichReportData(
@@ -412,15 +413,13 @@ function bumpReportsCache() {
   invalidateListCache('chartContext:');
 }
 
-async function nextReportNumber(type: string, reportDate?: string | null): Promise<string> {
-  const ts = reportDate ? new Date(`${reportDate}T00:00:00`) : new Date();
-  const year = ts.getFullYear();
-  const month = ts.toLocaleString('en-US', { month: 'short' }).toUpperCase();
-  const startDay = ts.getDate();
-  const end = new Date(ts);
-  end.setDate(end.getDate() + 6);
-  const endDay = end.getDate();
-  const base = `${type}-${year}-${month}-${startDay}-${endDay}`;
+async function nextReportNumber(
+  type: string,
+  reportData?: Record<string, unknown> | null,
+): Promise<string> {
+  const fromPeriod = buildReportNumberFromData(type, reportData ?? null);
+  // No reporting period yet (blank draft) — do not stamp today's date into the ID.
+  const base = fromPeriod || `${String(type).toUpperCase()}-DRAFT`;
   const counterRef = doc(db, COLLECTIONS.counters, `reportNumber_${base}`);
   return runTransaction(db, async (tx) => {
     const snap = await tx.get(counterRef);
@@ -846,10 +845,7 @@ export async function saveReportFs(payload: {
   }
 
   retainOtherSignatories(reportData, undefined, saver?.role);
-  const reportNumber = await nextReportNumber(
-    payload.report_type,
-    String(reportData.report_date ?? '') || null,
-  );
+  const reportNumber = await nextReportNumber(payload.report_type, reportData);
   let scheduleVersionId: string | null = null;
   let scheduleVersionLabel: string | null = null;
   try {
@@ -898,7 +894,7 @@ export async function previewReportFs(payload: Parameters<typeof saveReportFs>[0
   const r = saved.report;
   const preview_html = `<div style="font-family:sans-serif;padding:24px">
     <h1>${r.report_type} Preview</h1>
-    <p><strong>Report:</strong> ${r.report_number}</p>
+    <p><strong>Report:</strong> ${displayReportNumber(r)}</p>
     <p><strong>Project:</strong> ${r.project_name ?? r.project_id}</p>
     <p><strong>Status:</strong> ${r.status}</p>
     <pre style="background:#f5f5f5;padding:12px;overflow:auto">${JSON.stringify(r.report_data, null, 2)}</pre>
@@ -1491,7 +1487,8 @@ async function deliverFinalApprovalEmail(reportId: string, pdfBase64?: string) {
         attachment = undefined;
       }
     }
-    const response = await fetch('/api/approval-email/', {
+    const origin = typeof window !== 'undefined' ? window.location.origin : (process.env.APP_URL || 'http://localhost:3000');
+    const response = await fetch(`${origin}/api/approval-email/`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${token}`,

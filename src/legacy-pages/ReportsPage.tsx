@@ -21,6 +21,7 @@ import { buildOfficialReportHtml } from '../lib/officialReportHtml';
 import { buildReportPreviewHtml } from '../lib/reportVerification';
 import { downloadReportPreviewPdf } from '../lib/downloadReportPdf';
 import { wrapPreviewDocument } from '../lib/previewHelpers';
+import { displayReportNumber } from '../lib/reportNumber';
 import { formatReportDisplayDate } from '../lib/stewaCalculations';
 
 const REPORT_TYPES: { type: SwaStewaReportKind; label: string; desc: string; color: string }[] = [
@@ -97,7 +98,7 @@ export function ReportsPage() {
     (r.report_data?.project_name as string) || r.project_name || `Project #${r.project_id}`;
 
   const openReportPreview = async (rpt: SwaStewaReport) => {
-    const title = `${rpt.report_type} · ${rpt.report_number}`;
+    const title = `${rpt.report_type} · ${displayReportNumber(rpt)}`;
     setPreviewLoading(true);
     setPreviewTitle(title);
     setPreviewOpen(true);
@@ -129,7 +130,13 @@ export function ReportsPage() {
     const search = query.trim().toLowerCase();
     const matchesQuery =
       !search ||
-      [report.report_number, report.project_name, report.report_type, reportTitle(report)]
+      [
+        report.report_number,
+        displayReportNumber(report),
+        report.project_name,
+        report.report_type,
+        reportTitle(report),
+      ]
         .filter(Boolean)
         .some((value) => String(value).toLowerCase().includes(search));
     const matchesType = typeFilter === 'all' || report.report_type === typeFilter;
@@ -277,7 +284,7 @@ export function ReportsPage() {
               <tbody className="divide-y divide-border/80">
                 {pageItems.map((rpt) => (
                   <tr key={rpt.id} className="transition hover:bg-surface-muted/40">
-                    <td className="px-5 py-4"><p className="font-semibold text-text">{rpt.report_number}</p><p className="mt-1 text-xs text-text-muted">{formatReportDisplayDate(rpt)}</p></td>
+                    <td className="px-5 py-4"><p className="font-semibold text-text">{displayReportNumber(rpt)}</p><p className="mt-1 text-xs text-text-muted">{formatReportDisplayDate(rpt)}</p></td>
                     <td className="max-w-[280px] px-5 py-4"><p className="truncate font-medium text-text">{reportTitle(rpt)}</p>{rpt.rejection_reason && <p className="mt-1 truncate text-xs text-warning">Revision: {rpt.rejection_reason}</p>}</td>
                     <td className="px-5 py-4"><span className={`rounded-full px-2.5 py-1 text-[10px] font-bold uppercase ${rpt.report_type === 'SWA' ? 'bg-violet-100 text-violet-800' : rpt.report_type === 'STEWA' ? 'bg-amber-100 text-amber-900' : 'bg-teal-100 text-teal-900'}`}>{rpt.report_type}</span></td>
                     <td className="px-5 py-4 text-text-muted">{submittedByLabel(rpt.created_by)}</td>

@@ -12,7 +12,17 @@ import Module from 'node:module';
 import path from 'node:path';
 import { createRequire } from 'node:module';
 
-const PROJECT_ID = 'constructflow-c82cd';
+import fs from 'node:fs';
+
+let envProjectId = process.env.NEXT_PUBLIC_FIREBASE_PROJECT_ID;
+if (!envProjectId) {
+  try {
+    const rawEnv = fs.readFileSync(path.resolve(process.cwd(), '.env.local'), 'utf8');
+    const m = rawEnv.match(/NEXT_PUBLIC_FIREBASE_PROJECT_ID=(.+)/);
+    if (m) envProjectId = m[1].trim().replace(/^["']|["']$/g, '');
+  } catch {}
+}
+const PROJECT_ID = envProjectId || 'construction-9dd1b';
 const COLLECTIONS = [
   'projects',
   'reports',
@@ -24,10 +34,15 @@ const COLLECTIONS = [
 ];
 
 const KEEP_ACCOUNTS = [
+  { email: 'constructflow.contractor.1@gmail.com', uid: '2NZ3RiVhU4Qmr9j4mcqJuc55Jnr2' },
   { email: 'constructflow.contractor.1@gmail.com', uid: 'seH2VNGkbYayfsOXQv3MWs3iWpQ2' },
+  { email: 'constructflow.engineerr1@gmail.com', uid: 'NzjUnZfonHRgOAt2y93vfJnBvQj2' },
   { email: 'constructflow.engineerr1@gmail.com', uid: 'h56w1QM8ulW9Ce04kp58etDBpRA3' },
+  { email: 'constructflow.engineerii@gmail.com', uid: 'J9PoPjytn1XOgT0A2giLGV9MBRn2' },
   { email: 'constructflow.engineerii@gmail.com', uid: 'qQgmsn3rfPcozuJqTnuJsJLZex62' },
+  { email: 'constructflow.engineerIII@gmail.com', uid: 'EsGDIN06ZlhEoxULVvMKhUzZZw02' },
   { email: 'constructflow.engineerIII@gmail.com', uid: 'wdqmy5ISw6hoJOjyRy7O6UrLbwA3' },
+  { email: 'constructflow.engineer4@gmail.com', uid: 'PZk9F1prMXMLQNienfd45GNltcH3' },
   { email: 'constructflow.engineer4@gmail.com', uid: 'rBlH2NpQPuWhrL9g7nqsm3GcUyP2' },
 ];
 

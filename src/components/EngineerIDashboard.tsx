@@ -14,6 +14,7 @@ import { getDashboardStats, type DashboardData } from '../lib/dashboardApi';
 import { listProjects, type ProjectRow } from '../lib/projectsApi';
 import { listReports, type SwaStewaReport } from '../lib/swaStewaApi';
 import { canEditReport } from '../lib/reportPermissions';
+import { displayReportNumber } from '../lib/reportNumber';
 import { usePagination } from '../hooks/usePagination';
 
 const ACTIONABLE_STATUSES = new Set([
@@ -375,7 +376,7 @@ export function EngineerIDashboard() {
                 <tbody>
                   {workQueue.slice(0, 10).map((report) => (
                     <tr key={report.id} className="border-b border-border/70 last:border-0">
-                      <td className="px-4 py-3 font-medium text-text">{report.report_number}</td>
+                      <td className="px-4 py-3 font-medium text-text">{displayReportNumber(report)}</td>
                       <td className="px-4 py-3">
                         <ReportTypeBadge type={report.report_type} />
                       </td>

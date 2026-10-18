@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { Link } from '../lib/nextRouter';
 import { listReports, type SwaStewaReport } from '../lib/swaStewaApi';
 import { getRecentlyViewedReportIds } from '../lib/recentViewed';
+import { displayReportNumber } from '../lib/reportNumber';
 import { NavIcon } from './NavIcon';
 
 const APPROVED = new Set(['approved', 'generated']);
@@ -83,7 +84,7 @@ export function RecentActivities() {
                 <div className="min-w-0">
                   <p className="truncate font-medium text-text">{projectTitleOf(r)}</p>
                   <p className="text-sm text-text-muted">
-                    {r.report_type} · {r.report_number}
+                    {r.report_type} · {displayReportNumber(r)}
                   </p>
                 </div>
                 <span

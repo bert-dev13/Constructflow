@@ -5,15 +5,15 @@ constructflow.engineerr1@gmail.com
 pass: fortesting01
 
 constructflow.engineerii@gmail.com
-Pass: EngineerII
+Pass: fortesting01
 
 constructflow.engineerIII@gmail.com 
 
-Pass: Engineer 3
+Pass: fortesting01
 
 constructflow.engineer4@gmail.com
 
-Pass: Engineer 4
+Pass: fortesting01
 ```bash
 npm run seed:firebase
 ```

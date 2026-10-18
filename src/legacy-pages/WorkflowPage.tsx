@@ -31,6 +31,7 @@ import { buildOfficialReportHtml } from '../lib/officialReportHtml';
 import { buildReportPreviewHtml } from '../lib/reportVerification';
 import { downloadReportPreviewPdf } from '../lib/downloadReportPdf';
 import { wrapPreviewDocument } from '../lib/previewHelpers';
+import { displayReportNumber } from '../lib/reportNumber';
 import { formatReportDisplayDate } from '../lib/stewaCalculations';
 
 const REPORT_TYPES: { type: SwaStewaReportKind; label: string; desc: string; color: string }[] = [
@@ -131,6 +132,7 @@ export function WorkflowPage() {
       !q ||
       title.includes(q) ||
       r.report_number.toLowerCase().includes(q) ||
+      displayReportNumber(r).toLowerCase().includes(q) ||
       r.report_type.toLowerCase().includes(q) ||
       (STATUS_LABELS[r.status] ?? r.status).toLowerCase().includes(q) ||
       String(r.created_by ?? '').toLowerCase().includes(q);
@@ -272,7 +274,7 @@ export function WorkflowPage() {
       await deleteReport(rpt.id);
       // Immediately update local list and tab counts without requiring manual refresh
       setReports((prev) => prev.filter((r) => String(r.id) !== String(rpt.id)));
-      setSuccess(`Document ${rpt.report_number || rpt.id} deleted.`);
+      setSuccess(`Document ${displayReportNumber(rpt) || rpt.id} deleted.`);
       await loadReports();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Could not delete document.');
@@ -375,7 +377,7 @@ export function WorkflowPage() {
     (r.report_data?.prepared_by_name as string) || 'Engineer I';
 
   const openReportPreview = async (rpt: SwaStewaReport) => {
-    const title = `${rpt.report_type} · ${rpt.report_number}`;
+    const title = `${rpt.report_type} · ${displayReportNumber(rpt)}`;
     setPreviewTitle(title);
     setPreviewOpen(true);
     setPreviewHtml('');
@@ -618,7 +620,7 @@ export function WorkflowPage() {
                         <span className="rounded-md bg-surface-muted px-1.5 py-0.5 text-[10px] font-bold uppercase tracking-wide text-text-muted">
                           {rpt.report_type}
                         </span>
-                        <p className="font-semibold leading-tight text-text">{rpt.report_number}</p>
+                        <p className="font-semibold leading-tight text-text">{displayReportNumber(rpt)}</p>
                         <span className="rounded-full border border-amber-200 bg-amber-50 px-2 py-0.5 text-[10px] font-semibold uppercase text-amber-800">
                           {STATUS_LABELS[rpt.status] ?? rpt.status.replace(/_/g, ' ')}
                         </span>
@@ -626,7 +628,7 @@ export function WorkflowPage() {
                       <p className="mt-1 truncate text-sm text-text">{reportTitle(rpt)}</p>
                       <p className="truncate text-xs text-text-muted">
                         By {reportAuthor(rpt)}
-                        {period && period !== '—' && period !== rpt.report_number ? ` · ${period}` : ''}
+                        {period && period !== '—' && period !== displayReportNumber(rpt) ? ` · ${period}` : ''}
                       </p>
 
                       {mine ? (
@@ -829,7 +831,7 @@ export function WorkflowPage() {
                       return (
                         <tr key={rpt.id} className="transition hover:bg-surface-muted/40">
                           <td className="px-4 py-3">
-                            <p className="font-semibold text-text">{rpt.report_number}</p>
+                            <p className="font-semibold text-text">{displayReportNumber(rpt)}</p>
                             <p className="mt-0.5 text-[11px] text-text-muted">
                               {formatReportDisplayDate(rpt)}
                             </p>

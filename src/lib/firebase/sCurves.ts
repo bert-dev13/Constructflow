@@ -650,7 +650,7 @@ export async function getSCurveFs(
   projectId: string | number,
   snapshotId?: string | number | null,
   reportingInterval?: SCurveReportingInterval,
-  options?: { throughReportId?: string },
+  options?: { throughReportId?: string; curveType?: SCurveType },
 ) {
   const id = asId(projectId);
 
@@ -738,8 +738,9 @@ export async function getSCurveFs(
   const start = ctx.projectStart;
   const duration = Math.max(1, schedule.projectDuration || 110);
 
+  const effectiveCurveType = options?.curveType ?? ctx.settings.curveType;
   const settingsBase: SCurveSettingsState = {
-    curveType: ctx.settings.curveType,
+    curveType: effectiveCurveType,
     reportingInterval: ctx.settings.reportingInterval,
     theoreticalTotalPeriods: ctx.settings.theoreticalTotalPeriods,
     theoreticalDurationDays: ctx.settings.theoreticalDurationDays,
@@ -959,7 +960,7 @@ export async function getSCurveFs(
         originalDurationDays: schedule.projectDuration || null,
       });
     }
-  } else if (!options?.throughReportId && !snapshotData) {
+  } else if (!options?.curveType && !options?.throughReportId && !snapshotData) {
     // Persist in the background — do not block the page render on Firestore write.
     // Skip entirely for view-only roles (Engineer II–IV) to avoid permission-denied noise.
     const access = await getAccessContext();

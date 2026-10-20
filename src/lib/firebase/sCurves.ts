@@ -199,8 +199,14 @@ export function stampRecordedActual(
     for (const [date, percent] of [...genuine].sort((a, b) => a[0].localeCompare(b[0]))) {
       if (date <= start) held = percent;
     }
+    const curveStart = projectStart?.slice(0, 10) || '';
+    // The 0% project-start anchor is the latest Actual when no report exists yet.
+    if (held == null && curveStart && curveStart <= start && genuine.size > 0) held = 0;
     if (held != null) {
       const frozen = round2(held);
+      for (const point of byDate.values()) {
+        if (point.date >= start && point.date <= end) point.actual = frozen;
+      }
       ensure(start).actual = frozen;
       ensure(end).actual = frozen;
     }

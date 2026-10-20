@@ -37,7 +37,6 @@ import { generateSwaStewaSCurve,
   type SCurveType,
 } from '../lib/sCurveApi';
 import { computeSCurveCostSummary } from '../lib/sCurveItems';
-import type { SCurvePayItemMappingLine } from '../lib/sCurveCostWeights';
 import type { SCurvePoint } from '../types';
 import { exportSCurvePdf, formatChartPercent, placePercentLabels } from '../lib/chartPdfExport';
 import { NavIcon, type NavIconName } from '../components/NavIcon';
@@ -437,7 +436,6 @@ export function SCurvePage() {
   const [targetPlanPhp, setTargetPlanPhp] = useState<number | null>(null);
   const [actualPlanPercent, setActualPlanPercent] = useState<number | null>(null);
   const [apiTotalContractAmount, setApiTotalContractAmount] = useState(0);
-  const [payItemMappings, setPayItemMappings] = useState<SCurvePayItemMappingLine[]>([]);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
   const [chartReady, setChartReady] = useState(false);
@@ -465,9 +463,6 @@ export function SCurvePage() {
       totalWeightPct: mappedWeightPct,
     };
   }, [costDirty, costItems, apiTotalContractAmount]);
-  const unmappedWeightPct = payItemMappings
-    .filter((line) => line.status !== 'mapped')
-    .reduce((sum, line) => sum + (Number(line.weightPct) || 0), 0);
   const [activeTab, setActiveTab] = useState<SCurveTab>('curve');
   const costPaging = usePagination(costSummary.items, { resetKey: `${projectId}-${viewingSnapshotId ?? 'live'}` });
   const activityPaging = usePagination(activities, { resetKey: projectId });
@@ -714,7 +709,6 @@ export function SCurvePage() {
         setTargetPlanPhp(res.target_plan_php ?? null);
         setActualPlanPercent(res.actual_plan_percent ?? null);
         setApiTotalContractAmount(Number(res.total_contract_amount) || 0);
-        setPayItemMappings(res.pay_item_mappings ?? []);
         setCostDirty(false);
         setCostMessage('');
       })
@@ -745,7 +739,6 @@ export function SCurvePage() {
         setTargetPlanPhp(null);
         setActualPlanPercent(null);
         setApiTotalContractAmount(0);
-        setPayItemMappings([]);
         setCostDirty(false);
         setCostMessage('');
       })
@@ -1034,11 +1027,10 @@ export function SCurvePage() {
             </div>
           ))}
         </div>
-        <div className="grid gap-3 sm:grid-cols-3">
+        <div className="grid gap-3 sm:grid-cols-2">
           {([
             ['Critical path', criticalPath.length, syncedFromPdm ? 'Synced from PDM schedule' : 'Not synced from PDM', 'approval'],
             ['Total contract amount', `P ${formatMoney(costSummary.totalContractAmount)}`, 'Full SWA contract amount', 'reports'],
-            ['Mapped WT%', `${costSummary.totalWeightPct.toFixed(2)}%`, unmappedWeightPct > 0.05 ? `${unmappedWeightPct.toFixed(2)}% of contract weight is not assigned to a PDM activity.` : 'Cost weight currently assigned to PDM activities', 'projects'],
           ] as [string, string | number, string, NavIconName][]).map(([label, value, caption, icon]) => (
             <div key={label} className="rounded-2xl border border-border bg-card p-4 shadow-sm">
               <div className="flex items-start justify-between gap-3">

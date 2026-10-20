@@ -39,7 +39,10 @@ function formatBase(type: string, start: DateParts, end: DateParts): string {
   const month = MONTH_SHORT[from.m - 1] ?? 'JAN';
   const prefix = `${String(type).toUpperCase()}-${from.y}-${month}-${pad2(from.d)}`;
   if (from.y === to.y && from.m === to.m && from.d === to.d) return prefix;
-  return `${prefix}-${pad2(to.d)}`;
+  if (from.y === to.y && from.m === to.m) return `${prefix}-${pad2(to.d)}`;
+  const endMonth = MONTH_SHORT[to.m - 1] ?? 'JAN';
+  if (from.y === to.y) return `${prefix}-${endMonth}-${pad2(to.d)}`;
+  return `${prefix}-${to.y}-${endMonth}-${pad2(to.d)}`;
 }
 
 /** Parse labels such as "July 6–9, 2026" or "July 06 – August 05, 2026". */
@@ -139,6 +142,8 @@ function resolveReportingPeriod(
  * Examples:
  * - SWA July 6–9, 2026 → SWA-2026-JUL-06-09
  * - STEWA July 6–12, 2026 → STEWA-2026-JUL-06-12
+ * - STEWA January 4 – August 21, 2026 → STEWA-2026-JAN-04-AUG-21
+ * - STEWA August 21, 2026 → STEWA-2026-AUG-21
  * - IAR July 6, 2026 → IAR-2026-JUL-06
  */
 export function buildReportNumberFromData(

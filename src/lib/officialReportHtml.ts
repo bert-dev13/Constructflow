@@ -441,6 +441,11 @@ export function buildOfficialStewaHtml(
   );
 
   const asOf = field(data, 'report_date');
+  const reportNo = displayReportNumber({
+    report_type: 'STEWA',
+    report_number: report.report_number,
+    report_data: data,
+  });
   const periodStart = field(data, 'period_start');
   const periodEnd = field(data, 'period_end');
   const periodHtml =
@@ -459,14 +464,32 @@ export function buildOfficialStewaHtml(
 
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><style>
-@page { size: 8.5in 13in; margin: 32px 42px 44px 42px; }
+@page { size: 8.5in 13in; margin: 0.32in 0.42in 0.28in 0.42in; }
 ${SHARED_CSS}
-body { font-size: 10pt; max-width: 780px; margin: 0 auto; }
-table.form td.lbl { width: 52%; white-space: normal; }
-table.sig-table { width: 100%; border-collapse: collapse; margin-top: 36px; }
-table.sig-table td { width: 50%; text-align: center; vertical-align: top; border: none; padding: 8px 16px; font-size: 9.5pt; }
-.email-footer { margin-top: 28px; font-size: 9pt; font-weight: bold; }
+body { font-size: 10.5pt; max-width: none; margin: 0; padding: 0; position: relative; }
+.report-no { font-size: 9pt; position: static; text-align: right; margin: 0 0 2px; color: #444; }
+.letterhead { margin: 0 0 4px; }
+.letterhead .seal { width: 58px; overflow: hidden; }
+.letterhead .seal img { width: 54px !important; height: 54px !important; }
+.letterhead .header-text { padding: 0 8px; }
+.letterhead .gov, .letterhead .addr { font-size: 8.5pt; line-height: 1.1; margin-top: 0; }
+.letterhead .prov { font-size: 12pt; line-height: 1.1; margin-top: 0; }
+.letterhead .office { font-size: 10pt; line-height: 1.1; margin-top: 1px; }
+.doc-title { margin: 2px 0 1px; font-size: 12pt; line-height: 1.15; }
+.meta { margin: 0 0 4px; font-size: 10.5pt; line-height: 1.2; }
+table.form { margin: 1px 0 4px; }
+table.form td { padding: 2px 3px; font-size: 10.5pt; line-height: 1.2; }
+table.form td.lbl { width: 48%; white-space: normal; padding-right: 4px; }
+table.form td.val { min-height: 0; padding-bottom: 1px; }
+.signatures { margin-top: 12px; font-size: 9.5pt; gap: 8px; }
+.sig-mark { min-height: 22px; margin-top: 2px; }
+.sig-image { max-width: 110px; max-height: 22px; }
+.sig-initials { font-size: 13pt; }
+.sig-name { margin-top: 1px; font-size: 9pt; min-height: 1.1em; }
+.sig-title { font-size: 8.5pt; margin-top: 1px; line-height: 1.15; }
+.email-footer { margin-top: 10px; font-size: 9pt; font-weight: bold; }
 </style></head><body>
+<div class="report-no">${escapeHtml(reportNo)}</div>
 ${letterheadHtml()}
 <div class="doc-title">STATEMENT OF TIME ELAPSED AND WORK ACCOMPLISHED</div>
 <div class="meta">As of <u>${escapeHtml(asOf ? formatExcelDate(asOf) : '')}</u></div>
@@ -545,20 +568,39 @@ export function buildOfficialIarHtml(
 
   return `<!DOCTYPE html>
 <html><head><meta charset="UTF-8"><style>
-@page { size: 8.5in 13in; margin: 0.35in 0.4in 0.4in 0.4in; }
+@page { size: 8.5in 13in; margin: 0.22in 0.28in 0.2in 0.28in; }
 ${SHARED_CSS}
-body { font-size: 7.5pt; }
-.section-lbl { font-weight: bold; font-size: 7.5pt; margin: 8px 0 2px; text-transform: uppercase; }
-.two-col { width: 100%; border-collapse: collapse; margin-top: 4px; }
-.two-col > tbody > tr > td { width: 50%; vertical-align: top; padding: 0 4px 0 0; border: none; }
-.two-col > tbody > tr > td + td { padding: 0 0 0 4px; }
-.lined-box, .problems-box { border: 1px solid #000; min-height: 40px; padding: 2px 4px; font-size: 7pt; }
-.lined-box p { margin: 0 0 6px; border-bottom: 1px solid #ccc; min-height: 10px; }
-.meta-table { width: 100%; border-collapse: collapse; margin-bottom: 8px; font-size: 7.5pt; }
-.meta-table td { padding: 3px 4px; vertical-align: bottom; border: none; }
-.meta-table td { white-space: normal; overflow-wrap: anywhere; word-wrap: break-word; height: auto; }
-.meta-table .lbl { font-weight: bold; white-space: normal; width: 1%; }
+body { font-size: 8pt; padding: 0; margin: 0; }
+.report-no { font-size: 7.5pt; margin: 0 0 1px; }
+.letterhead { margin: 0 0 2px; }
+.letterhead .seal { width: 48px; overflow: hidden; }
+.letterhead .seal img { width: 44px !important; height: 44px !important; }
+.letterhead .header-text { padding: 0 6px; }
+.letterhead .gov, .letterhead .addr { font-size: 7.5pt; line-height: 1.05; margin-top: 0; }
+.letterhead .prov { font-size: 11pt; line-height: 1.05; margin-top: 0; }
+.letterhead .office { font-size: 8.5pt; line-height: 1.05; margin-top: 1px; }
+.doc-title { margin: 1px 0 2px; font-size: 11pt; line-height: 1.1; }
+.section-lbl { font-weight: bold; font-size: 7.5pt; margin: 3px 0 1px; text-transform: uppercase; }
+.two-col { width: 100%; border-collapse: collapse; margin-top: 2px; }
+.two-col > tbody > tr > td { width: 50%; vertical-align: top; padding: 0 3px 0 0; border: none; }
+.two-col > tbody > tr > td + td { padding: 0 0 0 3px; }
+.lined-box, .problems-box { border: 1px solid #000; min-height: 0; padding: 1px 4px; font-size: 7.5pt; line-height: 1.15; }
+.lined-box p { margin: 0; border-bottom: 1px solid #ddd; min-height: 12px; line-height: 1.15; }
+.meta-table { width: 100%; border-collapse: collapse; margin-bottom: 2px; font-size: 8pt; }
+.meta-table td { padding: 1px 3px; vertical-align: bottom; border: none; }
+.meta-table td { white-space: normal; overflow-wrap: anywhere; word-wrap: break-word; height: auto; line-height: 1.15; }
+.meta-table .lbl { font-weight: bold; white-space: nowrap; width: 1%; }
 .meta-table .val { border-bottom: 1px solid #000; }
+table.grid { table-layout: fixed; }
+table.grid th, table.grid td { padding: 1px 3px; font-size: 7.5pt; line-height: 1.15; }
+table.grid th { font-size: 7pt; line-height: 1.1; }
+table.grid td.right { white-space: nowrap; }
+.signatures { margin-top: 6px; font-size: 7.5pt; gap: 4px; }
+.sig-mark { min-height: 16px; margin-top: 1px; }
+.sig-image { max-width: 88px; max-height: 16px; }
+.sig-initials { font-size: 11pt; }
+.sig-name { margin-top: 1px; font-size: 7pt; min-height: 1.05em; }
+.sig-title { font-size: 6.5pt; margin-top: 0; line-height: 1.1; }
 </style></head><body>
 <div class="report-no">${escapeHtml(report.report_number)}</div>
 ${letterheadHtml()}
@@ -582,6 +624,10 @@ ${letterheadHtml()}
   </tr>
 </table>
 <table class="grid">
+  <colgroup>
+    <col style="width:9%"><col style="width:36%"><col style="width:20%">
+    <col style="width:12%"><col style="width:12%"><col style="width:11%">
+  </colgroup>
   <thead>
     <tr>
       <th rowspan="2">Item No.</th>
@@ -596,6 +642,10 @@ ${letterheadHtml()}
 </table>
 <div class="section-lbl">For variation order</div>
 <table class="grid">
+  <colgroup>
+    <col style="width:9%"><col style="width:34%"><col style="width:11%"><col style="width:10%">
+    <col style="width:12%"><col style="width:12%"><col style="width:12%">
+  </colgroup>
   <thead>
     <tr>
       <th>Item No.</th><th>Description</th><th>Quantity</th><th>Unit</th>

@@ -49,4 +49,47 @@ assert.equal(
   'STEWA-2026-JUL-06-12',
 );
 
+assert.equal(
+  buildReportNumberFromData('STEWA', {
+    period_start: '2026-01-04',
+    period_end: '2026-08-21',
+  }),
+  'STEWA-2026-JAN-04-AUG-21',
+);
+
+assert.equal(
+  buildReportNumberFromData('STEWA', {
+    period_start: '2026-01-04',
+    period_end: '2026-01-21',
+  }),
+  'STEWA-2026-JAN-04-21',
+);
+
+assert.equal(
+  buildReportNumberFromData('STEWA', {
+    report_date: '2026-08-21',
+  }),
+  'STEWA-2026-AUG-21',
+);
+
+assert.equal(
+  buildReportNumberFromData('STEWA', {
+    period_start: '2026-12-28',
+    period_end: '2027-01-04',
+  }),
+  'STEWA-2026-DEC-28-2027-JAN-04',
+);
+
+assert.equal(
+  displayReportNumber({
+    report_type: 'STEWA',
+    report_number: 'STEWA-2026-JAN-04-21',
+    report_data: {
+      period_start: '2026-01-04',
+      period_end: '2026-08-21',
+    },
+  }),
+  'STEWA-2026-JAN-04-AUG-21',
+);
+
 console.log('report number checks OK');

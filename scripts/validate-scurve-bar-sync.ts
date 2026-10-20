@@ -4,7 +4,10 @@ import {
   buildSCurvePeriods,
   buildTheoreticalBarChartTasks,
   buildTheoreticalSCurvePeriods,
+  buildTheoreticalTargetPeriods,
   theoreticalAccomplishmentPct,
+  theoreticalPlanPct,
+  theoreticalSchedulePct,
 } from '../src/lib/sCurvePeriods';
 import type { PdmActivity, PdmDependency } from '../src/types';
 
@@ -231,6 +234,69 @@ assert(
       [31, 40],
     ]),
   'Theoretical bar chart task spans do not align with theoretical periods',
+);
+
+const targetWindow = {
+  startDate: '2026-01-01',
+  endDate: '2026-06-30',
+  totalDurationDays: 180,
+};
+assert(theoreticalSchedulePct('2026-01-01', targetWindow) === 0, 'Target starts at 0%');
+assert(theoreticalSchedulePct('2026-06-30', targetWindow) === 100, 'Target ends at 100%');
+assert(
+  theoreticalSchedulePct('2026-01-31', targetWindow) === theoreticalAccomplishmentPct(30, 180),
+  'Target on day 30 must use the cosine formula',
+);
+assert(
+  theoreticalPlanPct('2025-12-01', targetWindow) === 0,
+  'Target before the schedule is 0%',
+);
+assert(
+  theoreticalPlanPct('2026-07-15', targetWindow) === 100,
+  'Target after the schedule is 100%',
+);
+
+const suspendedTarget = {
+  startDate: '2026-01-01',
+  endDate: '2026-07-10',
+  totalDurationDays: 180,
+  suspensionStart: '2026-02-01',
+  suspensionEnd: '2026-02-10',
+};
+const frozen = theoreticalSchedulePct('2026-01-31', suspendedTarget);
+assert(theoreticalSchedulePct('2026-02-01', suspendedTarget) === frozen, 'Target freezes on suspension start');
+assert(theoreticalSchedulePct('2026-02-10', suspendedTarget) === frozen, 'Target stays frozen through suspension');
+assert(
+  (theoreticalSchedulePct('2026-02-11', suspendedTarget) ?? 0) > (frozen ?? 0),
+  'Target resumes after suspension',
+);
+assert(theoreticalSchedulePct('2026-07-10', suspendedTarget) === 100, 'Revised target end is 100%');
+
+const originalOnly = {
+  startDate: '2026-01-01',
+  endDate: '2026-06-30',
+  totalDurationDays: 180,
+};
+assert(
+  theoreticalSchedulePct('2026-03-01', originalOnly) !==
+    theoreticalSchedulePct('2026-03-01', suspendedTarget),
+  'A revised suspension must not copy the original percentage',
+);
+
+const targetPeriods = buildTheoreticalTargetPeriods({
+  window: targetWindow,
+  totalContractAmount: 1_000_000,
+  reportingInterval: '30_day',
+});
+assert(targetPeriods[0]?.targetAccomplishmentPct === targetPeriods[0]?.cumulativePct, 'First period target is the formula value');
+assert(
+  targetPeriods[0]?.cumulativePct === theoreticalAccomplishmentPct(30, 180),
+  'Initial period cumulative must already be the cosine formula',
+);
+assert(targetPeriods[targetPeriods.length - 1]?.cumulativePct === 100, 'Target periods end at 100%');
+assert(
+  Math.abs((targetPeriods[0]?.targetAccomplishmentPhp ?? 0) - (1_000_000 * (targetPeriods[0]?.cumulativePct ?? 0)) / 100) < 0.02,
+  'Target PHP follows the same percentage',
 );
 
 console.log('S-Curve and Bar Chart synchronization validation passed.');

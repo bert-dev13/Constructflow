@@ -200,6 +200,124 @@ export function theoreticalAccomplishmentPct(
 }
 
 /**
+ * Schedule window for the theoretical cosine.
+ * Total duration is working days (suspension days are not part of the denominator).
+ * Current period is working days elapsed from start, frozen across a suspension window.
+ */
+export interface TheoreticalCurveWindow {
+  startDate: string;
+  endDate: string;
+  totalDurationDays: number;
+  suspensionStart?: string | null;
+  suspensionEnd?: string | null;
+}
+
+function inclusiveSpanDays(startDate: string, endDate: string): number {
+  const start = startDate.slice(0, 10);
+  const end = endDate.slice(0, 10);
+  if (!start || !end || end < start) return 0;
+  return exclusiveDaysBetween(start, end) + 1;
+}
+
+/** Working days from the schedule start through `asOf`, with a suspension gap removed. */
+export function theoreticalElapsedDays(asOf: string, window: TheoreticalCurveWindow): number {
+  const start = window.startDate.slice(0, 10);
+  const date = asOf.slice(0, 10);
+  if (!start || !date || date <= start) return 0;
+
+  const sStart = window.suspensionStart?.slice(0, 10) || '';
+  const sEnd = window.suspensionEnd?.slice(0, 10) || '';
+  const hasSuspension = !!(sStart && sEnd && sEnd >= sStart);
+
+  if (hasSuspension && date >= sStart && date <= sEnd) {
+    const dayBefore = addDays(sStart, -1);
+    if (!dayBefore || dayBefore <= start) return 0;
+    return exclusiveDaysBetween(start, dayBefore);
+  }
+
+  let elapsed = exclusiveDaysBetween(start, date);
+  if (hasSuspension && date > sEnd) {
+    elapsed -= inclusiveSpanDays(sStart, sEnd);
+  }
+  return Math.max(0, elapsed);
+}
+
+/**
+ * Authoritative theoretical Target/Original % for one schedule window.
+ * 100 × (1 − cos(π × (Current Period / Total Periods))) / 2
+ * Start date is 0%. End date is 100%. Dates outside the window are null.
+ */
+export function theoreticalSchedulePct(
+  asOf: string,
+  window: TheoreticalCurveWindow,
+): number | null {
+  const start = window.startDate.slice(0, 10);
+  const end = window.endDate.slice(0, 10);
+  const date = asOf.slice(0, 10);
+  if (!start || !end || !date || end < start || date < start || date > end) return null;
+  if (date === start) return 0;
+  if (date === end) return 100;
+  const total = Math.max(1, Math.floor(window.totalDurationDays) || 1);
+  return theoreticalAccomplishmentPct(theoreticalElapsedDays(date, window), total);
+}
+
+/** Same curve as {@link theoreticalSchedulePct}, clamped to 0% before the start and 100% after the end. */
+export function theoreticalPlanPct(asOf: string, window: TheoreticalCurveWindow): number | null {
+  const start = window.startDate.slice(0, 10);
+  const end = window.endDate.slice(0, 10);
+  const date = asOf.slice(0, 10);
+  if (!start || !end || !date || end < start) return null;
+  if (date < start) return 0;
+  if (date > end) return 100;
+  return theoreticalSchedulePct(date, window);
+}
+
+/**
+ * Reporting-interval checkpoints whose cumulative Target % is {@link theoreticalSchedulePct}.
+ * The interval "target this period" is the difference between those cumulative values.
+ */
+export function buildTheoreticalTargetPeriods(input: {
+  window: TheoreticalCurveWindow;
+  totalContractAmount: number;
+  reportingInterval?: SCurveReportingInterval;
+}): SCurvePeriodRow[] {
+  const reportingInterval = input.reportingInterval ?? '30_day';
+  const daysPerPeriod = intervalDays(reportingInterval);
+  const start = input.window.startDate.slice(0, 10);
+  const end = input.window.endDate.slice(0, 10);
+  const span = Math.max(1, exclusiveDaysBetween(start, end));
+  const periodCount = Math.max(1, Math.ceil(span / daysPerPeriod));
+  const amount = Math.max(0, input.totalContractAmount);
+  const rows: SCurvePeriodRow[] = [];
+  let previousCumulativePct = 0;
+
+  for (let periodIndex = 1; periodIndex <= periodCount; periodIndex += 1) {
+    const isLast = periodIndex === periodCount;
+    const periodStartDay = (periodIndex - 1) * daysPerPeriod;
+    const periodEndExclusive = Math.min(span, periodIndex * daysPerPeriod);
+    const startDate = periodIndex === 1 ? start : addDays(start, periodStartDay + 1);
+    const endDate = isLast ? end : addDays(start, periodEndExclusive);
+    const cumulativePct = isLast ? 100 : (theoreticalSchedulePct(endDate, input.window) ?? 0);
+    const cumulativePhp = isLast ? round4(amount) : round4((cumulativePct * amount) / 100);
+    const targetAccomplishmentPct = round4(cumulativePct - previousCumulativePct);
+    const previousPhp = round4((previousCumulativePct * amount) / 100);
+    rows.push({
+      periodIndex,
+      label: periodLabel(reportingInterval, periodIndex),
+      startDate,
+      endDate,
+      targetAccomplishmentPct,
+      targetAccomplishmentPhp: round4(cumulativePhp - previousPhp),
+      cumulativePct: round4(cumulativePct),
+      cumulativePhp,
+    });
+    previousCumulativePct = cumulativePct;
+  }
+
+  return rows;
+}
+
+/**
  * Original (blue) theoretical % — cosine S-curve.
  * With periodStart: STEWA-style inclusive elapsed from NTP+9 / project start, with suspension freeze.
  * Without periodStart: exclusive day count from start→asOf over duration.

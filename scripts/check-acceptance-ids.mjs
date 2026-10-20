@@ -30,6 +30,16 @@ assert.equal(displayReportNumber(swa), 'SWA-2026-JUL-06-09');
 assert.equal(formatReportDisplayDate(swa), 'July 6–9, 2026');
 assert.equal(displayReportNumber(stewa), 'STEWA-2026-JUL-06-12');
 assert.equal(formatReportDisplayDate(stewa), 'July 6–12, 2026');
+const crossMonthStewa = {
+  report_type: 'STEWA',
+  report_number: 'STEWA-2026-JAN-04-21',
+  report_data: {
+    period_start: '2026-01-04',
+    period_end: '2026-08-21',
+  },
+};
+assert.equal(displayReportNumber(crossMonthStewa), 'STEWA-2026-JAN-04-AUG-21');
+assert.equal(formatReportDisplayDate(crossMonthStewa), 'January 4 – August 21, 2026');
 assert.equal(displayReportNumber(iar), 'IAR-2026-JUL-06');
 assert.equal(buildReportNumberFromData('IAR', { report_date: '2026-07-06' }), 'IAR-2026-JUL-06');
 assert.notEqual(buildReportNumberFromData('IAR', { report_date: '2026-07-06' }), 'IAR-2026-JUL-06-06');

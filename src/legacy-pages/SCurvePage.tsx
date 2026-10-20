@@ -125,7 +125,7 @@ function PlanLine({
 }) {
   return (
     <Line
-      type="monotone"
+      type={dataKey === 'actual' ? 'linear' : 'monotone'}
       dataKey={dataKey}
       name={name}
       stroke={stroke}
@@ -364,85 +364,27 @@ function ExtraPercentLabels({
   );
 }
 
-/** Draw N overlay markers for the actual (orange) series by interpolating along the rendered actual curve.
- * This does not alter underlying data or the line; it only places SVG circles at computed positions.
- */
+/** Orange markers only on chart points that already carry a recorded Actual value. */
 function ActualOverlayMarkers({
   chartPoints,
-  periods,
-  swaReportDates,
+  dates,
 }: {
   chartPoints: ChartPoint[];
-  periods: number;
-  swaReportDates?: Set<string>;
+  dates: Set<string>;
 }) {
   const xScale = useXAxisScale();
   const yScale = useYAxisScale();
-  if (!xScale || !yScale || chartPoints.length === 0) return null;
-
-  const rows = chartPoints.filter((p) => p.actual != null && Number.isFinite(Number(p.actual)));
-  if (rows.length === 0) return null;
-
-  // find first non-zero actual index within rows
-  let firstNonZeroIdx = rows.findIndex((p) => Number(p.actual) !== 0);
-  if (firstNonZeroIdx === -1) firstNonZeroIdx = 0;
-  const startDate = rows[Math.max(0, firstNonZeroIdx - 1)].date.slice(0, 10);
-  const endDate = rows[rows.length - 1].date.slice(0, 10);
-
-  // build full date list from chartPoints between startDate..endDate
-  const fullRange = chartPoints
-    .map((p) => p.date.slice(0, 10))
-    .filter((d) => d >= startDate && d <= endDate);
-  const uniqRange = Array.from(new Set(fullRange));
-  if (uniqRange.length === 0) return null;
-
-  // For Actual overlay markers: ignore `periods` and only show genuine SWA report dates.
-
-  // helper: compute interpolated actual at iso date
-  function interpActualAt(dateIso: string): number | null {
-    const ms = Date.parse(`${dateIso.slice(0, 10)}T00:00:00Z`);
-    // find surrounding rows with known actual
-    let prev = null;
-    let next = null;
-    for (const r of rows) {
-      const rMs = Date.parse(`${r.date.slice(0, 10)}T00:00:00Z`);
-      if (rMs <= ms) prev = { ms: rMs, val: Number(r.actual) };
-      if (rMs >= ms) {
-        next = { ms: rMs, val: Number(r.actual) };
-        break;
-      }
-    }
-    if (prev && prev.ms === ms) return prev.val;
-    if (!prev && next) return next.val;
-    if (prev && !next) return prev.val;
-    if (prev && next && next.ms !== prev.ms) {
-      const t = (ms - prev.ms) / (next.ms - prev.ms);
-      return prev.val + t * (next.val - prev.val);
-    }
-    return null;
-  }
-
-  // Create final set: only genuine SWA report dates that fall within uniqRange.
-  const finalDatesSet = new Set<string>();
-  if (swaReportDates && swaReportDates.size > 0) {
-    for (const d of swaReportDates) {
-      if (d && uniqRange.includes(d)) finalDatesSet.add(d);
-    }
-  } else {
-    // No genuine SWA dates available: show no overlay dots (Actual line still renders).
-  }
-
-  const finalDates = Array.from(finalDatesSet).sort();
+  if (!xScale || !yScale || chartPoints.length === 0 || dates.size === 0) return null;
 
   return (
     <g>
-      {finalDates.map((d, idx) => {
-        const val = interpActualAt(d);
-        if (val == null || !Number.isFinite(val)) return null;
-        const x = xScale(Date.parse(`${d}T00:00:00Z`), { position: 'middle' }) as number | null;
-        const y = yScale(val);
+      {chartPoints.map((row, idx) => {
+        const date = row.date.slice(0, 10);
+        if (!dates.has(date) || row.actual == null || !Number.isFinite(Number(row.actual))) return null;
+        const x = xScale(row.t, { position: 'middle' }) as number | null;
+        const y = yScale(Number(row.actual));
         if (x == null || y == null || !Number.isFinite(x) || !Number.isFinite(y)) return null;
-        return <circle key={`actual-overlay-${d}-${idx}`} cx={x} cy={y} r={3.5} fill="#f97316" stroke="#fff" strokeWidth={0.5} />;
+        return <circle key={`actual-overlay-${date}-${idx}`} cx={x} cy={y} r={3.5} fill="#f97316" stroke="#fff" strokeWidth={0.5} />;
       })}
     </g>
   );
@@ -560,8 +502,7 @@ export function SCurvePage() {
       return new Set<string>();
     }
   }, [chartPoints, theoreticalTotalPeriods]);
-  // When the user selects a periods count, mirror the Original sampling for
-  // Revised and Actual series so each shows the same number of marker dates.
+  // Periods samples Revised markers only. Actual markers stay on recorded report dates.
   const revisedDotDates = useMemo(() => {
     const dates = sampleSeriesDisplayDates(
       chartPoints as unknown as Array<{ date: string } & Record<string, unknown>>,
@@ -571,41 +512,30 @@ export function SCurvePage() {
     return new Set(dates);
   }, [chartPoints, theoreticalTotalPeriods]);
  
-  // Orange Actual markers must be chosen from real SWA report points only.
-  // Only treat authentic SWA reports as genuine Actual markers (exclude STEWA).
-  const swaReports = useMemo(
-    () =>
-      reportFeed
-        .filter((r) => r.reportType === 'SWA' && r.percent != null)
-        .slice()
-        .sort((a, b) => a.date.localeCompare(b.date)),
-    [reportFeed],
-  );
-
-  const actualCandidateDatesMemo = useMemo(() => {
-    const rows = chartPoints.filter((p) => p.actual != null && Number.isFinite(Number(p.actual)));
-    if (rows.length === 0) return [] as string[];
-    let firstNonZeroIdx = rows.findIndex((p) => Number(p.actual) !== 0);
-    if (firstNonZeroIdx === -1) firstNonZeroIdx = 0;
-    const startIdx = firstNonZeroIdx > 0 ? Math.max(0, firstNonZeroIdx - 1) : 0;
-    return rows.slice(startIdx).map((p) => p.date.slice(0, 10));
-  }, [chartPoints]);
-
+  // Markers only where the plotted Actual equals a recorded SWA/STEWA percent.
+  // Suspension boundary points that merely hold the last value do not match, so they stay unmarked.
   const actualDotDates = useMemo(() => {
-    if (actualCandidateDatesMemo.length === 0) return new Set<string>();
-    const candidateDates = actualCandidateDatesMemo;
-    // Actual dots must come ONLY from genuine SWA report dates. Ignore Periods for Actual.
-    const union = new Set<string>();
-    try {
-      for (const r of swaReports) {
-        const d = r.date?.slice(0, 10);
-        if (d && candidateDates.includes(d)) union.add(d);
-      }
-    } catch {
-      // If swaReports unavailable or none match, leave union empty.
+    const recordedByDate = new Map<string, number[]>();
+    for (const report of reportFeed) {
+      if (report.reportType !== 'SWA' && report.reportType !== 'STEWA') continue;
+      if (report.percent == null || !Number.isFinite(report.percent) || !report.date) continue;
+      const date = report.date.slice(0, 10);
+      const values = recordedByDate.get(date) ?? [];
+      values.push(report.percent);
+      recordedByDate.set(date, values);
     }
-    return union;
-  }, [actualCandidateDatesMemo, theoreticalTotalPeriods]);
+    const dots = new Set<string>();
+    for (const point of chartPoints) {
+      if (point.actual == null || !Number.isFinite(Number(point.actual))) continue;
+      const recorded = recordedByDate.get(point.date.slice(0, 10));
+      if (!recorded) continue;
+      const plotted = Number(point.actual);
+      if (recorded.some((value) => Math.abs(value - plotted) < 0.02)) {
+        dots.add(point.date.slice(0, 10));
+      }
+    }
+    return dots;
+  }, [chartPoints, reportFeed]);
 
   const extraLabelDates = useMemo(
     () => ({ revised: revisedDotDates, actual: actualDotDates }),
@@ -1420,7 +1350,7 @@ export function SCurvePage() {
                                   {/* Target (currentPlan) intentionally rendered below after labels to ensure it appears above Original when overlapping */}
                                   {hasActualProgress && (
                                     <Line
-                                      type="monotone"
+                                      type="linear"
                                       dataKey="actual"
                                       name={curveType === 'pdm_based' ? 'Actual' : hasRevisedSchedule ? 'SWA/STEWA S-Curve' : 'Actual Plan %'}
                                       stroke="#f97316"
@@ -1492,8 +1422,7 @@ export function SCurvePage() {
                                   <ZIndexLayer zIndex={DefaultZIndexes.label}>
                                     <ActualOverlayMarkers
                                       chartPoints={chartPoints}
-                                      periods={theoreticalTotalPeriods}
-                                      swaReportDates={new Set(swaReports.map((r) => String(r.date ?? '').slice(0, 10)))}
+                                      dates={actualDotDates}
                                     />
                                   </ZIndexLayer>
                                 </LineChart>
@@ -1605,7 +1534,10 @@ export function SCurvePage() {
                                       {points.map((p) => (
                                         <td key={p.pointDate ?? p.date} className="border-l border-border p-2">
                                           {(() => {
-                                            const basis = curveType === 'pdm_based' ? p.currentPlan : p.originalPlan;
+                                            const basis =
+                                              curveType === 'pdm_based' || hasRevisedSchedule
+                                                ? p.currentPlan
+                                                : p.originalPlan;
                                             const slip =
                                               p.actual != null && basis != null
                                                 ? Math.round((p.actual - basis) * 100) / 100

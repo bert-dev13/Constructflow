@@ -19,17 +19,21 @@ import {
 import {
   applySCurvePeriodEdits,
   buildSCurvePeriods,
-  buildTheoreticalSCurvePeriods,
+  buildTheoreticalTargetPeriods,
+  exclusiveDaysBetween,
   intervalDays,
   isSCurveReportingInterval,
   originalTheoreticalPct,
   periodIndexForDate,
   readSCurvePeriodEdits,
   readStoredSCurvePeriods,
-  sampleBaselinePeriods,
+  theoreticalElapsedDays,
+  theoreticalPlanPct,
+  theoreticalSchedulePct,
   type SCurvePeriodEdit,
   type SCurveReportingInterval,
   type SCurvePeriodRow,
+  type TheoreticalCurveWindow,
 } from '../sCurvePeriods';
 import {
   compareTargetVsActual,
@@ -111,6 +115,110 @@ function resolveStewaPlan(stewaReports: ReportProgressEntry[]): StewaPlanBasis |
   };
 }
 
+/**
+ * One Actual % per reporting date.
+ * SWA accomplishment wins when SWA and STEWA share that date.
+ * Equal percentages on different dates stay separate.
+ */
+export function genuineActualByDate(reports: ReportProgressEntry[]): Map<string, number> {
+  const ranked = reports
+    .filter(
+      (report) =>
+        (report.reportType === 'SWA' || report.reportType === 'STEWA') &&
+        report.date &&
+        Number.isFinite(report.percent),
+    )
+    .slice()
+    .sort(
+      (a, b) =>
+        a.date.localeCompare(b.date) || a.reportNumber.localeCompare(b.reportNumber),
+    );
+  const byDate = new Map<string, { percent: number; type: string }>();
+  for (const report of ranked) {
+    const date = report.date.slice(0, 10);
+    const existing = byDate.get(date);
+    if (existing?.type === 'SWA' && report.reportType === 'STEWA') continue;
+    byDate.set(date, { percent: report.percent, type: report.reportType });
+  }
+  return new Map([...byDate].map(([date, value]) => [date, value.percent]));
+}
+
+/**
+ * Actual is only the recorded SWA/STEWA percent on that report date.
+ * A project suspension holds the last actual at or before the start, as a
+ * horizontal line through the suspension end. Those two boundary points are
+ * not reports.
+ */
+export function stampRecordedActual(
+  points: SCurvePoint[],
+  reports: ReportProgressEntry[],
+  suspension: SuspensionWindow | null,
+): SCurvePoint[] {
+  const genuine = genuineActualByDate(reports);
+  const byDate = new Map<string, SCurvePoint>();
+  for (const point of points) {
+    const date = point.date.slice(0, 10);
+    byDate.set(date, {
+      ...point,
+      date,
+      pointDate: point.pointDate ?? date,
+      actual: null,
+      variance: null,
+    });
+  }
+
+  const ensure = (date: string): SCurvePoint => {
+    const key = date.slice(0, 10);
+    const existing = byDate.get(key);
+    if (existing) return existing;
+    const created: SCurvePoint = {
+      date: key,
+      pointDate: key,
+      label: key,
+      periodLabel: null,
+      originalPlan: null,
+      currentPlan: null,
+      actual: null,
+    };
+    byDate.set(key, created);
+    return created;
+  };
+
+  const start = suspension?.start?.slice(0, 10) || '';
+  const end = suspension?.end?.slice(0, 10) || '';
+  const hasSuspension = !!(start && end && end >= start);
+
+  for (const [date, percent] of genuine) {
+    if (hasSuspension && date > start && date <= end) continue;
+    ensure(date).actual = round2(percent);
+  }
+
+  if (hasSuspension) {
+    let held: number | null = null;
+    for (const [date, percent] of [...genuine].sort((a, b) => a[0].localeCompare(b[0]))) {
+      if (date <= start) held = percent;
+    }
+    if (held != null) {
+      const frozen = round2(held);
+      ensure(start).actual = frozen;
+      ensure(end).actual = frozen;
+    }
+  }
+
+  for (const point of byDate.values()) {
+    point.variance =
+      point.actual != null && point.currentPlan != null
+        ? round2(point.actual - point.currentPlan)
+        : null;
+  }
+
+  return [...byDate.values()]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .filter(
+      (point) => point.originalPlan != null || point.currentPlan != null || point.actual != null,
+    );
+}
+
 /** SWA accomplishment by date; fill STEWA sample dates inside an SWA as-of range. */
 function buildSwaAccomplishmentByDate(
   swaReports: ReportProgressEntry[],
@@ -164,6 +272,114 @@ function endSeriesAtFirstFull(
     }
     return { ...point, [key]: capped };
   });
+}
+
+function inclusiveSpanDays(startDate: string, endDate: string): number {
+  if (!startDate || !endDate || endDate < startDate) return 0;
+  return exclusiveDaysBetween(startDate, endDate) + 1;
+}
+
+/**
+ * Original approved window vs Target/revised window.
+ * Target uses the revised completion date and drops suspension days from elapsed time.
+ * When there is no revision, both windows match and the curves overlap.
+ */
+function resolveTheoreticalWindows(input: {
+  projectStart: string;
+  originalStart: string | null;
+  plannedEnd: string | null;
+  projectDuration: number;
+  suspension: SuspensionWindow | null;
+}): { original: TheoreticalCurveWindow; target: TheoreticalCurveWindow; differs: boolean } {
+  const duration = Math.max(1, Math.floor(input.projectDuration) || 1);
+  const start = (input.originalStart || input.projectStart).slice(0, 10);
+  const originalEnd = (input.plannedEnd || addDays(start, duration)).slice(0, 10);
+  const originalSpan = Math.max(1, exclusiveDaysBetween(start, originalEnd));
+  const original: TheoreticalCurveWindow = {
+    startDate: start,
+    endDate: originalEnd,
+    totalDurationDays: originalSpan,
+  };
+
+  const suspension = input.suspension;
+  const sStart = suspension?.start?.slice(0, 10) || '';
+  const sEnd = suspension?.end?.slice(0, 10) || '';
+  const hasSuspension = !!(sStart && sEnd && sEnd >= sStart);
+  const revisedEnd = (suspension?.revisedCompletion || originalEnd).slice(0, 10);
+  const targetEnd = revisedEnd >= start ? revisedEnd : originalEnd;
+  const targetWindow: TheoreticalCurveWindow = {
+    startDate: start,
+    endDate: targetEnd,
+    totalDurationDays: 1,
+    suspensionStart: hasSuspension ? sStart : null,
+    suspensionEnd: hasSuspension ? sEnd : null,
+  };
+  const suspDays =
+    hasSuspension && targetEnd > sEnd ? inclusiveSpanDays(sStart, sEnd) : 0;
+  const workingAtEnd = Math.max(1, exclusiveDaysBetween(start, targetEnd) - suspDays);
+  targetWindow.totalDurationDays = Math.max(1, theoreticalElapsedDays(targetEnd, targetWindow) || workingAtEnd);
+
+  const differs =
+    targetWindow.endDate !== original.endDate ||
+    targetWindow.totalDurationDays !== original.totalDurationDays ||
+    hasSuspension;
+  return { original, target: targetWindow, differs };
+}
+
+/** Daily cosine fill for Original or Target. Does not change Actual. */
+function fillTheoreticalDaily(
+  points: SCurvePoint[],
+  window: TheoreticalCurveWindow,
+  key: 'originalPlan' | 'currentPlan',
+): SCurvePoint[] {
+  const start = window.startDate.slice(0, 10);
+  const end = window.endDate.slice(0, 10);
+  if (!start || !end || end < start) return points;
+
+  const byDate = new Map<string, SCurvePoint>();
+  for (const point of points) {
+    const date = point.date.slice(0, 10);
+    byDate.set(date, { ...point, date, pointDate: point.pointDate ?? date });
+  }
+
+  let cursor = start;
+  for (let guard = 0; cursor && cursor <= end && guard < 1200; guard += 1) {
+    const prior = byDate.get(cursor) ?? {
+      date: cursor,
+      pointDate: cursor,
+      label: cursor,
+      periodLabel: null,
+      originalPlan: null,
+      currentPlan: null,
+      actual: null,
+    };
+    const raw = theoreticalSchedulePct(cursor, window);
+    const value = raw == null ? null : round2(raw);
+    const nextPoint: SCurvePoint = { ...prior, [key]: value };
+    if (key === 'currentPlan') {
+      nextPoint.variance =
+        prior.actual != null && value != null ? round2(prior.actual - value) : null;
+    }
+    byDate.set(cursor, nextPoint);
+    if (cursor === end) break;
+    const next = addCalendarDays(cursor, 1);
+    if (!next || next <= cursor) break;
+    cursor = next;
+  }
+
+  for (const [date, point] of byDate) {
+    if ((date < start || date > end) && point[key] != null) {
+      const cleared: SCurvePoint = { ...point, [key]: null };
+      if (key === 'currentPlan') cleared.variance = null;
+      byDate.set(date, cleared);
+    }
+  }
+
+  return [...byDate.values()]
+    .sort((a, b) => a.date.localeCompare(b.date))
+    .filter(
+      (point) => point.originalPlan != null || point.currentPlan != null || point.actual != null,
+    );
 }
 
 /** Daily Original cosine fill from planned start → planned end (overwrites Original). */
@@ -769,25 +985,6 @@ export async function getSCurveFs(
     costSummary.totalContractAmount > 0
       ? costSummary.totalContractAmount
       : Math.max(0, Number(ctx.projectContractAmount) || 0);
-  const periods =
-    settings.curveType === 'ideal_theoretical'
-      ? buildTheoreticalSCurvePeriods({
-          startDate: start,
-          projectDuration: duration,
-          endDate: ctx.projectPlannedEnd,
-          activities: schedule.activities,
-          costItems: costSummary.items,
-          totalContractAmount,
-          reportingInterval: settings.reportingInterval,
-        })
-      : buildSCurvePeriods({
-          startDate: start,
-          projectDuration: duration,
-          activities: schedule.activities,
-          costItems: costSummary.items,
-          totalContractAmount,
-          reportingInterval: settings.reportingInterval,
-        });
   const suspension = readSuspensionWindow({
     baselineMode:
       ctx.baselineMode === 'prior_suspension' ||
@@ -800,6 +997,30 @@ export async function getSCurveFs(
     plannedEndDate: ctx.projectPlannedEnd,
     projectStart: ctx.projectStart,
   });
+  const theoreticalWindows =
+    settings.curveType === 'ideal_theoretical'
+      ? resolveTheoreticalWindows({
+          projectStart: start,
+          originalStart: ctx.originalProjectStart,
+          plannedEnd: ctx.projectPlannedEnd,
+          projectDuration: duration,
+          suspension,
+        })
+      : null;
+  const periods = theoreticalWindows
+    ? buildTheoreticalTargetPeriods({
+        window: theoreticalWindows.target,
+        totalContractAmount,
+        reportingInterval: settings.reportingInterval,
+      })
+    : buildSCurvePeriods({
+        startDate: start,
+        projectDuration: duration,
+        activities: schedule.activities,
+        costItems: costSummary.items,
+        totalContractAmount,
+        reportingInterval: settings.reportingInterval,
+      });
   const revisedPeriods = suspension
     ? buildRevisedBaselinePeriods({
         projectStart: start,
@@ -837,16 +1058,11 @@ export async function getSCurveFs(
     }
   }
   let displayPeriods = targetPeriods.map((row) => ({ ...row }));
-  if (periodCountCustomized && settings.curveType === 'ideal_theoretical' && !revisedPeriods) {
-    displayPeriods = sampleBaselinePeriods({
-      baseline: targetPeriods,
-      periodCount: settings.theoreticalTotalPeriods,
-      reportingInterval: settings.reportingInterval,
-    });
-  }
   displayPeriods = applySCurvePeriodEdits(displayPeriods, periodEdits, totalContractAmount);
   const monitoringPeriods = revisedPeriods ?? displayPeriods;
-  const usePlanCurves = settings.curveType === 'pdm_based' || stewaPlan != null;
+  const theoreticalLive = theoreticalWindows != null && !viewingSnapshot;
+  const usePlanCurves =
+    settings.curveType === 'pdm_based' || (stewaPlan != null && !theoreticalLive);
   const activities: SCurveActivity[] = schedule.activities.map((activity) => {
     const finishDate = addDays(start, activity.ef ?? activity.duration);
     const period = periodForDate(start, targetPeriods, finishDate, settings.reportingInterval);
@@ -876,7 +1092,7 @@ export async function getSCurveFs(
   });
   let points = buildProgressSCurvePoints(
     start,
-    monitoringPeriods,
+    theoreticalLive ? displayPeriods : monitoringPeriods,
     chronological.map((entry) => ({
       date: entry.date,
       percent: entry.percent,
@@ -886,7 +1102,10 @@ export async function getSCurveFs(
     })),
     settings.reportingInterval,
   );
-  if (usePlanCurves) {
+  if (theoreticalLive && theoreticalWindows) {
+    points = fillTheoreticalDaily(points, theoreticalWindows.original, 'originalPlan');
+    points = fillTheoreticalDaily(points, theoreticalWindows.target, 'currentPlan');
+  } else if (usePlanCurves) {
     points = reshapePlanCurves(points, {
       noticeToProceed: start,
       suspension,
@@ -923,6 +1142,10 @@ export async function getSCurveFs(
 
   const asOfDate = snapshotReportingDate || latestReport?.date || nowIso().slice(0, 10);
   const originalTargetPeriod = periodForDate(start, targetPeriods, asOfDate, settings.reportingInterval);
+  const theoreticalTarget =
+    theoreticalLive && theoreticalWindows
+      ? theoreticalPlanPct(asOfDate, theoreticalWindows.target)
+      : null;
   const planTarget = usePlanCurves
     ? targetPctOnDate(asOfDate, stewaPlan, {
         projectStart: start,
@@ -932,17 +1155,21 @@ export async function getSCurveFs(
       })
     : null;
   const effectiveTarget =
-    planTarget != null
-      ? planTarget
-      : originalTargetPeriod
-        ? round2(originalTargetPeriod.cumulativePct)
-        : null;
+    theoreticalTarget != null
+      ? round2(theoreticalTarget)
+      : planTarget != null
+        ? planTarget
+        : originalTargetPeriod
+          ? round2(originalTargetPeriod.cumulativePct)
+          : null;
   const effectiveTargetPhp =
-    planTarget != null
-      ? round2((planTarget * totalContractAmount) / 100)
-      : originalTargetPeriod
-        ? round2(originalTargetPeriod.cumulativePhp)
-        : null;
+    theoreticalTarget != null
+      ? round2((theoreticalTarget * totalContractAmount) / 100)
+      : planTarget != null
+        ? round2((planTarget * totalContractAmount) / 100)
+        : originalTargetPeriod
+          ? round2(originalTargetPeriod.cumulativePhp)
+          : null;
 
   if (snapshotPoints && !viewingMatchedReport) {
     points = snapshotPoints;
@@ -995,8 +1222,10 @@ export async function getSCurveFs(
   }
 
   points = anchorActualSeriesAtStart(points);
+  points = stampRecordedActual(points, [...swaReports, ...stewaReports], suspension);
 
   const status = compareTargetVsActual(effectiveTarget, actualPct);
+  const recordedActualByDate = genuineActualByDate([...swaReports, ...stewaReports]);
 
   // Candidate C: one comparison row per unique SWA/STEWA date (not per chronological feed entry).
   const comparisonRows: SCurveComparison[] = Array.from(
@@ -1011,18 +1240,25 @@ export async function getSCurveFs(
       const stewaEntry = stewaReports.find((entry) => entry.date.slice(0, 10) === date);
       const label = swaEntry?.label ?? stewaEntry?.label ?? date;
       const period = periodForDate(start, targetPeriods, date, settings.reportingInterval);
-      const target = usePlanCurves
-        ? (targetPctOnDate(date, stewaPlan, {
-            projectStart: start,
-            activities: schedule.activities,
-            costItems: costSummary.items,
-            suspension,
-          }) ?? 0)
-        : period
-          ? round2(period.cumulativePct)
-          : 0;
+      const theoreticalRow =
+        theoreticalLive && theoreticalWindows
+          ? theoreticalPlanPct(date, theoreticalWindows.target)
+          : null;
+      const target =
+        theoreticalRow != null
+          ? theoreticalRow
+          : usePlanCurves
+            ? (targetPctOnDate(date, stewaPlan, {
+                projectStart: start,
+                activities: schedule.activities,
+                costItems: costSummary.items,
+                suspension,
+              }) ?? 0)
+            : period
+              ? round2(period.cumulativePct)
+              : 0;
       const targetPhp = round2((target * totalContractAmount) / 100);
-      const actual = swaAccomplishmentByDate.get(date) ?? null;
+      const actual = recordedActualByDate.get(date) ?? null;
       const variance = actual != null ? Math.round((actual - target) * 100) / 100 : 0;
       const st =
         actual == null
@@ -1067,7 +1303,10 @@ export async function getSCurveFs(
     pay_item_mappings: costWeights.payItemMappings,
     synced_from_pdm: schedule.activities.length > 0,
     has_actual_progress: chronological.length >= 1,
-    has_revised_schedule: settings.curveType === 'pdm_based' || revisedPeriods != null,
+    has_revised_schedule:
+      settings.curveType === 'pdm_based' ||
+      revisedPeriods != null ||
+      Boolean(theoreticalWindows?.differs),
     schedule_status: status,
     comparisons: comparisonRows,
     report_feed: feed,

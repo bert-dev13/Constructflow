@@ -512,8 +512,8 @@ export function SCurvePage() {
     return new Set(dates);
   }, [chartPoints, theoreticalTotalPeriods]);
  
-  // Markers only where the plotted Actual equals a recorded SWA/STEWA percent.
-  // Suspension boundary points that merely hold the last value do not match, so they stay unmarked.
+  // Markers: the one 0% project-start anchor, plus dates whose plotted Actual
+  // matches a recorded SWA/STEWA percent. Periods and suspension holds do not add dots.
   const actualDotDates = useMemo(() => {
     const recordedByDate = new Map<string, number[]>();
     for (const report of reportFeed) {
@@ -525,6 +525,11 @@ export function SCurvePage() {
       recordedByDate.set(date, values);
     }
     const dots = new Set<string>();
+    const ordered = [...chartPoints].sort((a, b) => a.date.localeCompare(b.date));
+    const firstActual = ordered.find((point) => point.actual != null && Number.isFinite(Number(point.actual)));
+    if (firstActual && Number(firstActual.actual) === 0) {
+      dots.add(firstActual.date.slice(0, 10));
+    }
     for (const point of chartPoints) {
       if (point.actual == null || !Number.isFinite(Number(point.actual))) continue;
       const recorded = recordedByDate.get(point.date.slice(0, 10));

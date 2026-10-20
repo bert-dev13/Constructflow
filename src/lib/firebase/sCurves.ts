@@ -144,15 +144,16 @@ export function genuineActualByDate(reports: ReportProgressEntry[]): Map<string,
 }
 
 /**
- * Actual is only the recorded SWA/STEWA percent on that report date.
- * A project suspension holds the last actual at or before the start, as a
- * horizontal line through the suspension end. Those two boundary points are
- * not reports.
+ * Actual is only the recorded SWA/STEWA percent on that report date, plus one
+ * 0% anchor on the project start date. A suspension holds the last actual at
+ * or before the suspension start through the suspension end. The 0% anchor and
+ * the suspension boundary points are not reports.
  */
 export function stampRecordedActual(
   points: SCurvePoint[],
   reports: ReportProgressEntry[],
   suspension: SuspensionWindow | null,
+  projectStart?: string | null,
 ): SCurvePoint[] {
   const genuine = genuineActualByDate(reports);
   const byDate = new Map<string, SCurvePoint>();
@@ -203,6 +204,12 @@ export function stampRecordedActual(
       ensure(start).actual = frozen;
       ensure(end).actual = frozen;
     }
+  }
+
+  const curveStart = projectStart?.slice(0, 10) || '';
+  if (curveStart && genuine.size > 0) {
+    const anchor = ensure(curveStart);
+    if (anchor.actual == null) anchor.actual = 0;
   }
 
   for (const point of byDate.values()) {
@@ -1222,7 +1229,7 @@ export async function getSCurveFs(
   }
 
   points = anchorActualSeriesAtStart(points);
-  points = stampRecordedActual(points, [...swaReports, ...stewaReports], suspension);
+  points = stampRecordedActual(points, [...swaReports, ...stewaReports], suspension, start);
 
   const status = compareTargetVsActual(effectiveTarget, actualPct);
   const recordedActualByDate = genuineActualByDate([...swaReports, ...stewaReports]);

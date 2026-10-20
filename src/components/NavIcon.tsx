@@ -65,7 +65,7 @@ export function NavIcon({ name, className = 'h-4 w-4' }: NavIconProps) {
     case 'bar-chart':
       return (
         <svg {...common}>
-          <path d="M4 20V10M10 20V4M16 20v-7M22 20V8" {...stroke} />
+          <path d="M4 6h8M4 11h16M4 16h6M4 21h12" {...stroke} />
         </svg>
       );
     case 's-curve':
